@@ -20,11 +20,15 @@ const mockWorkers = [
 const SupervisorDashboard = ({ user }) => {
     const [workers, setWorkers] = useState(mockWorkers);
     const [alerts, setAlerts] = useState([]);
+    const [isConnected, setIsConnected] = useState(socket.connected);
     const navigate = useNavigate();
     const { t } = useTranslation();
 
     useEffect(() => {
         socket.connect();
+
+        socket.on('connect', () => { setIsConnected(true); });
+        socket.on('disconnect', () => { setIsConnected(false); });
 
         // Fetch current active state from server since page just loaded
         socket.emit('request_initial_data');
@@ -53,6 +57,8 @@ const SupervisorDashboard = ({ user }) => {
         });
 
         return () => {
+            socket.off('connect');
+            socket.off('disconnect');
             socket.off('initial_data');
             socket.off('emergency_alert_received');
             socket.off('worker_updated');
@@ -91,8 +97,10 @@ const SupervisorDashboard = ({ user }) => {
                 </div>
                 <div className="flex items-center gap-6">
                     <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded-full bg-[var(--safe)] glow-safe animate-pulse"></span>
-                        <span className="text-sm font-semibold text-[var(--safe)]">{t("System Online")}</span>
+                        <span className={`w-3 h-3 rounded-full ${isConnected ? 'bg-[var(--safe)] glow-safe animate-pulse' : 'bg-[var(--danger)] glow-danger'}`}></span>
+                        <span className={`text-sm font-semibold ${isConnected ? 'text-[var(--safe)]' : 'text-[var(--danger)]'}`}>
+                            {isConnected ? t("System Online") : "Connection Failed"}
+                        </span>
                     </div>
                     <button onClick={handleLogout} className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors">
                         <LogOut className="w-5 h-5" /> {t("Logout")}
