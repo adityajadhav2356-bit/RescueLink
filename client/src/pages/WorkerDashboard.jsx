@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
 // Auto-detect the server's network IP based on where the frontend is served from
-const SERVER_URL = `http://${window.location.hostname}:5000`;
+const SERVER_URL = import.meta.env.VITE_BACKEND_URL || `http://${window.location.hostname}:5000`;
 const socket = io(SERVER_URL, { autoConnect: false });
 
 const mockWorkers = [
