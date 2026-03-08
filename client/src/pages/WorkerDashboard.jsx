@@ -38,6 +38,7 @@ const WorkerDashboard = ({ user }) => {
     ]);
     const [isListening, setIsListening] = useState(false);
     const [transcriptText, setTranscriptText] = useState('');
+    const [isConnected, setIsConnected] = useState(socket.connected);
     const recognitionRef = React.useRef(null);
     const isListeningRef = React.useRef(isListening);
 
@@ -145,6 +146,10 @@ const WorkerDashboard = ({ user }) => {
         }
     }, [isListening, currentLangCode]); useEffect(() => {
         socket.connect();
+
+        socket.on('connect', () => { setIsConnected(true); });
+        socket.on('disconnect', () => { setIsConnected(false); });
+
         // Simulate real-time updates
         const interval = setInterval(() => {
             setData(prev => {
@@ -167,6 +172,8 @@ const WorkerDashboard = ({ user }) => {
 
         return () => {
             clearInterval(interval);
+            socket.off('connect');
+            socket.off('disconnect');
             socket.off('alert_resolved');
             socket.disconnect();
         };
@@ -232,6 +239,12 @@ const WorkerDashboard = ({ user }) => {
                 <div>
                     <h1 className="text-xl font-bold">{data.name}</h1>
                     <p className="text-sm text-gray-400">ID: {data.workerId} | Zone: {data.zone}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                        <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-[var(--safe)] animate-pulse' : 'bg-[var(--danger)]'}`}></span>
+                        <span className={`text-xs font-semibold ${isConnected ? 'text-[var(--safe)]' : 'text-[var(--danger)]'}`}>
+                            {isConnected ? "Linked to Command" : "Offline"}
+                        </span>
+                    </div>
                 </div>
                 <div className="flex items-center gap-3">
                     <div className={`px-4 py-2 rounded-full font-bold text-sm tracking-wider ${statusColor} ${statusGlow} bg-[rgba(0,0,0,0.5)] border border-current`}>
