@@ -1,6 +1,12 @@
 FROM node:18
+
 WORKDIR /app
-COPY . .
+
+COPY server/package*.json ./
 RUN npm install
+
+COPY server/ .
+
 EXPOSE 8080
-CMD ["npm", "start"]
+
+CMD ["node", "index.js"]
