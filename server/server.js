@@ -95,12 +95,12 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 8080;
 
-// Health route (must exist)
+// VERY IMPORTANT → Cloud Run health check
 app.get("/", (req, res) => {
     res.status(200).send("RescueLink backend running 🚀");
 });
 
-// Start server
+// Start server properly
 server.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on port ${PORT}`);
 });
