@@ -6,7 +6,7 @@ import WorkerDashboard from './pages/WorkerDashboard';
 import SupervisorDashboard from './pages/SupervisorDashboard';
 
 function App() {
-  const [user, setUser] = useState(null); // { id: 'w123', role: 'worker' | 'supervisor' }
+  const [user, setUser] = useState({ id: 'W-042', name: 'Alex Mercer', role: 'supervisor' });
 
   return (
     <Router>
@@ -14,15 +14,12 @@ function App() {
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login setUser={setUser} />} />
 
-        {/* Protected Routes */}
-        <Route
-          path="/worker"
-          element={user?.role === 'worker' ? <WorkerDashboard user={user} /> : <Navigate to="/login" />}
-        />
-        <Route
-          path="/supervisor"
-          element={user?.role === 'supervisor' ? <SupervisorDashboard user={user} /> : <Navigate to="/login" />}
-        />
+        {/* Dedicated Portals */}
+        <Route path="/worker" element={<WorkerDashboard user={user} />} />
+        <Route path="/supervisor" element={<SupervisorDashboard user={user} />} />
+
+        {/* Fallbacks */}
+        <Route path="*" element={<Navigate to="/supervisor" replace />} />
       </Routes>
     </Router>
   );

@@ -1,75 +1,320 @@
 @import "tailwindcss";
 
 :root {
-  --primary: #00f0ff;
-  /* electric blue */
-  --accent: #00ffff;
-  /* cyan glow */
-  --bg-dark: #050a14;
-  /* dark navy */
-  --bg-darker: #02050b;
-  /* blackish */
-  --safe: #00ff88;
-  /* green */
-  --warning: #ffcc00;
-  /* yellow */
-  --danger: #ff0055;
-  /* red */
+  /* Industrial Safety Command Center Palette */
+  --bg-void: #070B12;
+  --bg-panel: #0E1626;
+  --bg-panel-elevated: #142036;
+  --bg-panel-translucent: rgba(14, 22, 38, 0.85);
+
+  /* Primary Tactical Accents */
+  --safety-cyan: #00E5FF;
+  --safety-cyan-dark: #0284C7;
+  --safety-cyan-glow: rgba(0, 229, 255, 0.25);
+
+  /* Status Colors */
+  --safety-green: #10B981;
+  --safety-green-glow: rgba(16, 185, 129, 0.25);
+  --safety-amber: #F59E0B;
+  --safety-amber-glow: rgba(245, 158, 11, 0.25);
+  --safety-orange: #F97316;
+  --safety-orange-glow: rgba(249, 115, 22, 0.28);
+  --safety-red: #EF4444;
+  --safety-red-glow: rgba(239, 68, 68, 0.35);
+
+  /* Tactical Grid & Borders */
+  --grid-line: #1E2E4A;
+  --grid-line-subtle: #131E30;
+  --border-tactical: #243859;
+  --border-cyan: #00E5FF;
+
+  /* Typography Colors */
+  --text-primary: #F8FAFC;
+  --text-secondary: #94A3B8;
+  --text-muted: #64748B;
+  --text-bright: #FFFFFF;
+
+  /* Legacy Aliases for seamless component compatibility */
+  --brass: var(--safety-cyan);
+  --brass-dark: var(--safety-cyan-dark);
+  --brass-glow: var(--safety-cyan-glow);
+  --phosphor-amber: var(--safety-amber);
+  --phosphor-amber-glow: var(--safety-amber-glow);
+  --phosphor-green: var(--safety-green);
+  --phosphor-green-glow: var(--safety-green-glow);
+  --radar-red: var(--safety-red);
+  --radar-red-glow: var(--safety-red-glow);
+  --chart-line: var(--grid-line);
+  --chart-line-subtle: var(--grid-line-subtle);
+  --parchment: var(--text-primary);
+  --parchment-bright: var(--text-bright);
+  --muted: var(--text-secondary);
+  --muted-dark: var(--text-muted);
+
+  --primary: var(--safety-cyan);
+  --accent: var(--safety-amber);
+  --bg-dark: var(--bg-panel);
+  --bg-darker: var(--bg-void);
+  --safe: var(--safety-green);
+  --warning: var(--safety-amber);
+  --danger: var(--safety-red);
+
+  /* Typography */
+  --font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-data: 'IBM Plex Mono', 'JetBrains Mono', Consolas, monospace;
+
+  /* Geometry & Tokens */
+  --radius: 6px;
+  --border: 1px solid var(--grid-line);
+  --border-subtle: 1px solid var(--grid-line-subtle);
+  --rail-width: 64px;
+  --topbar-height: 52px;
+  --bottombar-height: 38px;
 }
 
 @theme {
-  --color-primary: var(--primary);
-  --color-accent: var(--accent);
-  --color-dark: var(--bg-dark);
-  --color-darker: var(--bg-darker);
-  --color-safe: var(--safe);
-  --color-warning: var(--warning);
-  --color-danger: var(--danger);
+  --color-primary: var(--safety-cyan);
+  --color-accent: var(--safety-amber);
+  --color-dark: var(--bg-panel);
+  --color-darker: var(--bg-void);
+  --color-safe: var(--safety-green);
+  --color-warning: var(--safety-amber);
+  --color-danger: var(--safety-red);
+
+  --color-cyan: var(--safety-cyan);
+  --color-amber: var(--safety-amber);
+  --color-green: var(--safety-green);
+  --color-red: var(--safety-red);
+  --color-grid: var(--grid-line);
+
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+  --font-data: var(--font-data);
 }
 
+/* Tactical Command Center Background */
 body {
-  background-color: var(--bg-darker);
-  /* A dark, futuristic industrial background overlaid with a heavy dark gradient */
-  background-image:
-    linear-gradient(to bottom, rgba(2, 5, 11, 0.85), rgba(5, 10, 20, 0.95)),
-    url('https://images.unsplash.com/photo-1518770660439-4636190af475?q=80&w=2070&auto=format&fit=crop');
-  background-size: cover;
-  background-position: center;
+  background-color: var(--bg-void);
+  background-image: 
+    linear-gradient(to right, var(--grid-line-subtle) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line-subtle) 1px, transparent 1px),
+    radial-gradient(ellipse at 50% 0%, rgba(0, 229, 255, 0.04) 0%, transparent 60%);
+  background-size: 32px 32px, 32px 32px, 100% 100%;
+  background-position: 0 0, 0 0, center top;
   background-attachment: fixed;
-  color: #e2e8f0;
-  font-family: 'Inter', system-ui, sans-serif;
+  color: var(--text-primary);
+  font-family: var(--font-body);
   margin: 0;
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Typography Utility Classes */
+.font-display { font-family: var(--font-display); }
+.font-body { font-family: var(--font-body); }
+.font-data { font-family: var(--font-data); }
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-void);
+  border: 1px solid var(--grid-line-subtle);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-tactical);
+  border-radius: var(--radius);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--safety-cyan-dark);
+}
+
+/* Accessible Focus States */
+:focus-visible {
+  outline: 2px solid var(--safety-cyan);
+  outline-offset: 2px;
+  box-shadow: 0 0 8px var(--safety-cyan-glow);
+}
+
+/* Tactical Bezel Panels */
+.bezel-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--grid-line);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), inset 0 0 15px rgba(0, 229, 255, 0.02);
+  border-radius: var(--radius);
+  position: relative;
+}
+
+.bezel-panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-top: 2px solid var(--safety-cyan);
+  border-left: 2px solid var(--safety-cyan);
+  pointer-events: none;
+}
+
+.bezel-panel::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 6px;
+  height: 6px;
+  border-bottom: 2px solid var(--safety-cyan);
+  border-right: 2px solid var(--safety-cyan);
+  pointer-events: none;
 }
 
 .glass-panel {
-  background: rgba(10, 20, 35, 0.6);
+  background: var(--bg-panel-translucent);
   backdrop-filter: blur(12px);
-  border: 1px solid rgba(0, 240, 255, 0.15);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--grid-line);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+  border-radius: var(--radius);
 }
 
-.glow-primary {
-  box-shadow: 0 0 15px rgba(0, 240, 255, 0.4);
+.console-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--grid-line);
+  border-radius: var(--radius);
+  transition: all 0.2s ease;
+}
+.console-card:hover {
+  border-color: var(--safety-cyan);
+  box-shadow: 0 0 12px var(--safety-cyan-glow);
 }
 
-.glow-danger {
-  box-shadow: 0 0 20px rgba(255, 0, 85, 0.6);
+/* Tactical Buttons */
+.btn-tactical {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-panel-elevated);
+  border: 1px solid var(--grid-line);
+  color: var(--text-primary);
+  font-family: var(--font-data);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-tactical:hover {
+  background: rgba(0, 229, 255, 0.1);
+  border-color: var(--safety-cyan);
+  color: var(--text-bright);
+  box-shadow: 0 0 10px var(--safety-cyan-glow);
+}
+.btn-tactical:active {
+  transform: scale(0.98);
+}
+.btn-tactical-primary {
+  background: rgba(0, 229, 255, 0.15);
+  border-color: var(--safety-cyan);
+  color: var(--safety-cyan);
+}
+.btn-tactical-primary:hover {
+  background: var(--safety-cyan);
+  color: var(--bg-void);
+  box-shadow: 0 0 15px var(--safety-cyan-glow);
+}
+.btn-tactical-danger {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: var(--safety-red);
+  color: var(--safety-red);
+}
+.btn-tactical-danger:hover {
+  background: var(--safety-red);
+  color: #FFFFFF;
+  box-shadow: 0 0 18px var(--safety-red-glow);
 }
 
-.glow-safe {
-  box-shadow: 0 0 15px rgba(0, 255, 136, 0.4);
+/* Radar Sweep Animation */
+.radar-sweep-container {
+  position: relative;
+  overflow: hidden;
+  border-radius: 50%;
+}
+.radar-sweep {
+  position: absolute;
+  inset: 0;
+  background: conic-gradient(from 0deg at 50% 50%, rgba(0, 229, 255, 0.4) 0deg, transparent 60deg, transparent 360deg);
+  animation: radarRotate 4s linear infinite;
+  pointer-events: none;
+}
+@keyframes radarRotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
-.glow-warning {
-  box-shadow: 0 0 15px rgba(255, 204, 0, 0.4);
+/* Pulsing Status Beacons */
+.beacon-pulse {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--safety-green);
+  box-shadow: 0 0 8px var(--safety-green-glow);
+  animation: pulseBeacon 2s infinite ease-in-out;
+}
+.beacon-pulse-amber {
+  background: var(--safety-amber);
+  box-shadow: 0 0 8px var(--safety-amber-glow);
+  animation: pulseBeacon 1.5s infinite ease-in-out;
+}
+.beacon-pulse-red {
+  background: var(--safety-red);
+  box-shadow: 0 0 12px var(--safety-red-glow);
+  animation: pulseBeaconRed 1s infinite ease-in-out;
+}
+@keyframes pulseBeacon {
+  0%, 100% { transform: scale(0.9); opacity: 0.8; }
+  50% { transform: scale(1.2); opacity: 1; }
+}
+@keyframes pulseBeaconRed {
+  0%, 100% { transform: scale(0.85); box-shadow: 0 0 4px var(--safety-red-glow); opacity: 0.7; }
+  50% { transform: scale(1.3); box-shadow: 0 0 16px var(--safety-red-glow); opacity: 1; }
 }
 
-.text-glow {
-  text-shadow: 0 0 10px rgba(0, 240, 255, 0.7);
+/* Critical Emergency Strobe Banner */
+.emergency-strobe {
+  animation: strobeBorder 1.2s infinite;
+}
+@keyframes strobeBorder {
+  0%, 100% { border-color: rgba(239, 68, 68, 0.4); box-shadow: 0 0 15px rgba(239, 68, 68, 0.2); }
+  50% { border-color: var(--safety-red); box-shadow: 0 0 25px var(--safety-red-glow); }
 }
 
-/* Leaflet override for dark mode */
+/* Text glow utilities */
+.text-glow-cyan { text-shadow: 0 0 10px var(--safety-cyan-glow); }
+.text-glow-green { text-shadow: 0 0 10px var(--safety-green-glow); }
+.text-glow-amber { text-shadow: 0 0 10px var(--safety-amber-glow); }
+.text-glow-red { text-shadow: 0 0 12px var(--safety-red-glow); }
+
+/* Leaflet dark theme fix */
 .leaflet-container {
-  background: #050a14 !important;
+  background-color: #070B12 !important;
+  font-family: var(--font-body) !important;
+}
+.leaflet-popup-content-wrapper {
+  background: var(--bg-panel-elevated) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--grid-line) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.8) !important;
+}
+.leaflet-popup-tip {
+  background: var(--bg-panel-elevated) !important;
 }

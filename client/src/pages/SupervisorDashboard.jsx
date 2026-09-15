@@ -1,165 +1,633 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Users, AlertTriangle, Crosshair, BellRing, LogOut } from 'lucide-react';
-import WorkerTable from '../components/WorkerTable';
-import WorkerMap from '../components/WorkerMap';
-import EmergencyLog from '../components/EmergencyLog';
 import { io } from 'socket.io-client';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import TopTacticalBar, { DEMO_STAKEHOLDERS } from '../components/TopTacticalBar';
+import ConsoleRail from '../components/ConsoleRail';
+import WorkerMap from '../components/WorkerMap';
+import IntelligencePanel from '../components/IntelligencePanel';
+import LiveEventStream from '../components/LiveEventStream';
+import IncidentTimeline, { INITIAL_TIMELINE_EVENTS } from '../components/IncidentTimeline';
+import EmergencyContextModal from '../components/EmergencyContextModal';
+import EmergencyBroadcastModal from '../components/EmergencyBroadcastModal';
+import VoiceIntercomModal from '../components/VoiceIntercomModal';
+import ScenarioSimulator from '../components/ScenarioSimulator';
+import SupervisorDispatchToastModal from '../components/SupervisorDispatchToastModal';
+import WorkerDigitalTwin from '../components/WorkerDigitalTwin';
+import WorkerTable from '../components/WorkerTable';
+import GeofenceManager from '../components/GeofenceManager';
+import SafetyAnalytics from './SafetyAnalytics';
+import { generatePredictiveWarnings } from '../services/predictiveEngine';
+import { INITIAL_HAZARDS } from '../services/hazardService';
+import { INITIAL_GEOFENCES } from '../services/geofenceService';
+import { INITIAL_RESCUE_TEAMS } from '../services/rescueTeamService';
+import { soundService } from '../services/soundService';
+import { ChevronUp, ChevronDown, Sparkles, Activity, Clock } from 'lucide-react';
 
-// Auto-detect the server's network IP based on where the frontend is served from
 const SERVER_URL = import.meta.env.VITE_BACKEND_URL || `http://${window.location.hostname}:5000`;
 const socket = io(SERVER_URL, { autoConnect: false });
 
-const mockWorkers = [
-    { workerId: 'W-042', name: 'Alex Mercer', zone: 'Sector 7G', status: 'SAFE', envTemp: 32, airQuality: 'Good', battery: 85, lat: 51.505, lng: -0.09 },
-    { workerId: 'W-011', name: 'Sarah Connor', zone: 'Tunnel B', status: 'WARNING', envTemp: 38, airQuality: 'Fair', battery: 45, lat: 51.51, lng: -0.1 },
-    { workerId: 'W-007', name: 'James Bond', zone: 'Deep Shaft 3', status: 'SAFE', envTemp: 28, airQuality: 'Good', battery: 90, lat: 51.51, lng: -0.08 }
+const INITIAL_WORKERS = [
+    {
+        workerId: 'W-042',
+        name: 'Alex Mercer',
+        zone: 'Sector 7G',
+        status: 'SAFE',
+        envTemp: 31,
+        airQuality: 'Good',
+        gasPpm: 12,
+        battery: 84,
+        connectivity: 'Strong',
+        heartRate: 76,
+        immobilityMinutes: 0,
+        lat: 51.505,
+        lng: -0.09
+    },
+    {
+        workerId: 'W-011',
+        name: 'Sarah Connor',
+        zone: 'Tunnel B',
+        status: 'WARNING',
+        envTemp: 38,
+        airQuality: 'Fair',
+        gasPpm: 34,
+        battery: 45,
+        connectivity: 'Strong',
+        heartRate: 114,
+        immobilityMinutes: 0,
+        lat: 51.510,
+        lng: -0.100
+    },
+    {
+        workerId: 'W-007',
+        name: 'James Bond',
+        zone: 'Deep Shaft 3',
+        status: 'SAFE',
+        envTemp: 28,
+        airQuality: 'Good',
+        gasPpm: 6,
+        battery: 90,
+        connectivity: 'Strong',
+        heartRate: 72,
+        immobilityMinutes: 0,
+        lat: 51.512,
+        lng: -0.080
+    }
 ];
 
-const SupervisorDashboard = ({ user }) => {
-    const [workers, setWorkers] = useState(mockWorkers);
-    const [alerts, setAlerts] = useState([]);
-    const [isConnected, setIsConnected] = useState(socket.connected);
+export const SupervisorDashboard = () => {
     const navigate = useNavigate();
     const { t } = useTranslation();
 
+    // Core Data State
+    const [workers, setWorkers] = useState(INITIAL_WORKERS);
+    const [alerts, setAlerts] = useState([]);
+    const [hazards, setHazards] = useState(INITIAL_HAZARDS);
+    const [geofences, setGeofences] = useState(INITIAL_GEOFENCES);
+    const [rescueTeams, setRescueTeams] = useState(INITIAL_RESCUE_TEAMS);
+    const [timelineEvents, setTimelineEvents] = useState(INITIAL_TIMELINE_EVENTS);
+    const [currentUser, setCurrentUser] = useState(DEMO_STAKEHOLDERS[2]); // S-01 Supervisor Commander
+
+    // Navigation & Views
+    const [activeSection, setActiveSection] = useState('overview'); // 'overview' | 'map' | 'workers' | 'alerts' | 'zones' | 'analytics' | 'broadcast' | 'simulator'
+    const [bottomDrawerTab, setBottomDrawerTab] = useState('stream'); // 'stream' | 'timeline'
+    const [isDrawerOpen, setIsDrawerOpen] = useState(true);
+
+    // Modals
+    const [selectedWorker, setSelectedWorker] = useState(null);
+    const [digitalTwinWorker, setDigitalTwinWorker] = useState(null);
+    const [activeSOSModalAlert, setActiveSOSModalAlert] = useState(null);
+    const [supervisorDispatchToast, setSupervisorDispatchToast] = useState(null);
+    const [showVoiceModal, setShowVoiceModal] = useState(false);
+    const [showBroadcastModal, setShowBroadcastModal] = useState(false);
+
+    // Real-time Predictive Warnings
+    const predictiveWarnings = generatePredictiveWarnings(workers, hazards, geofences);
+
+    // Socket.io Realtime Listener
     useEffect(() => {
         socket.connect();
-
-        socket.on('connect', () => { setIsConnected(true); });
-        socket.on('disconnect', () => { setIsConnected(false); });
-
-        // Fetch current active state from server since page just loaded
         socket.emit('request_initial_data');
 
         socket.on('initial_data', (data) => {
-            if (data.alerts) setAlerts(data.alerts);
-            if (data.workers) setWorkers(data.workers);
+            if (data.alerts && data.alerts.length > 0) setAlerts(data.alerts);
+            if (data.workers && data.workers.length > 0) setWorkers(data.workers);
         });
 
-        socket.on('emergency_alert_received', (data) => {
-            setAlerts(prev => [data, ...prev]);
+        socket.on('emergency_alert_received', (newAlert) => {
+            soundService.playEmergencyAlarm();
+            setAlerts(prev => [newAlert, ...prev.filter(a => a.workerId !== newAlert.workerId)]);
+            setWorkers(prev => prev.map(w => w.workerId === newAlert.workerId ? { ...w, status: 'CRITICAL', envTemp: newAlert.envTemp || w.envTemp + 4 } : w));
+            setActiveSOSModalAlert(newAlert);
+            addTimelineEvent({
+                time: new Date().toLocaleTimeString(),
+                workerId: newAlert.workerId,
+                zone: newAlert.zone || 'Tunnel B',
+                type: 'SOS_TRIGGERED',
+                text: `CRITICAL SOS: Worker ${newAlert.workerId} triggered emergency alert in ${newAlert.zone || 'Tunnel B'}!`,
+                severity: 'CRITICAL'
+            });
+        });
 
-            // Update worker status to CRITICAL
-            setWorkers(prev => prev.map(w => w.workerId === data.workerId ? { ...w, status: 'CRITICAL', envTemp: w.envTemp + 5 } : w));
+        socket.on('rescue_team_dispatched', (dispatchData) => {
+            setWorkers(prev => prev.map(w => w.workerId === dispatchData.workerId ? { ...w, status: 'RESCUE_EN_ROUTE' } : w));
+            setAlerts(prev => prev.filter(a => a.workerId !== dispatchData.workerId));
         });
 
         socket.on('worker_updated', (updatedData) => {
             setWorkers(prev => prev.map(w => {
                 if (w.workerId === updatedData.workerId) {
-                    // If supervisor currently sees them as CRITICAL, don't let a normal update revert it
-                    const keepCritical = w.status === 'CRITICAL';
-                    return { ...w, ...updatedData, status: keepCritical ? 'CRITICAL' : updatedData.status };
+                    return { ...w, ...updatedData };
                 }
                 return w;
             }));
         });
 
+        socket.on('alert_resolved', (data) => {
+            soundService.playAcknowledge();
+            setAlerts(prev => prev.filter(a => a.workerId !== data.workerId));
+            setWorkers(prev => prev.map(w => w.workerId === data.workerId ? { ...w, status: 'SAFE' } : w));
+            setActiveSOSModalAlert(null);
+            addTimelineEvent({
+                time: new Date().toLocaleTimeString(),
+                workerId: data.workerId,
+                type: 'RESOLVED',
+                text: `Incident for worker ${data.workerId} successfully resolved and verified safe.`,
+                severity: 'INFO'
+            });
+        });
+
         return () => {
-            socket.off('connect');
-            socket.off('disconnect');
-            socket.off('initial_data');
-            socket.off('emergency_alert_received');
-            socket.off('worker_updated');
             socket.disconnect();
         };
     }, []);
 
-    const handleAcknowledge = (alertIndex, workerId) => {
-        setAlerts(prev => prev.filter((_, i) => i !== alertIndex));
-        setWorkers(prev => prev.map(w => w.workerId === workerId ? { ...w, status: 'SAFE' } : w));
-        socket.emit('resolve_alert', { workerId });
+    const addTimelineEvent = (evt) => {
+        setTimelineEvents(prev => [{ id: Date.now(), ...evt }, ...prev]);
     };
 
-    const handleLogout = () => {
-        navigate('/login');
+    // User Switcher
+    const handleSwitchUser = (stakeholder) => {
+        setCurrentUser(stakeholder);
+        if (stakeholder.role === 'worker') {
+            navigate('/worker');
+        }
     };
 
-    const criticalCount = workers.filter(w => w.status === 'CRITICAL').length;
-    const warningCount = workers.filter(w => w.status === 'WARNING').length;
+    // Navigation Router
+    const handleNavigate = (sectionId) => {
+        if (sectionId === 'worker_portal') {
+            navigate('/worker');
+        } else {
+            setActiveSection(sectionId);
+        }
+    };
+
+    // Alert Actions
+    const handleAcknowledgeAlert = (alertData) => {
+        soundService.playAcknowledge();
+        addTimelineEvent({
+            time: new Date().toLocaleTimeString(),
+            workerId: alertData.workerId,
+            type: 'ACKNOWLEDGED',
+            text: `Alert for ${alertData.workerId} acknowledged by ${currentUser.name}.`,
+            severity: 'INFO'
+        });
+    };
+
+    const handleResolveAlert = (alertData) => {
+        soundService.playAcknowledge();
+        setAlerts(prev => prev.filter(a => a.workerId !== alertData.workerId));
+        setWorkers(prev => prev.map(w => w.workerId === alertData.workerId ? { ...w, status: 'SAFE', envTemp: 31, gasPpm: 12 } : w));
+        setActiveSOSModalAlert(null);
+        socket.emit('resolve_alert', { workerId: alertData.workerId });
+        addTimelineEvent({
+            time: new Date().toLocaleTimeString(),
+            workerId: alertData.workerId,
+            type: 'RESOLVED',
+            text: `Worker ${alertData.workerId} marked SAFE. Incident logged to Safety Analytics.`,
+            severity: 'INFO'
+        });
+    };
+
+    // Comprehensive Rescue Force Dispatch Handler
+    const handleDispatchResponder = (dispatchPayload) => {
+        soundService.playAcknowledge();
+
+        const targetWorkerId = dispatchPayload.workerId || 'W-042';
+        const targetWorker = workers.find(w => w.workerId === targetWorkerId) || workers[0];
+        const team = rescueTeams.find(t => t.id === dispatchPayload.teamId) || rescueTeams[0];
+
+        const fullPayload = {
+            workerId: targetWorkerId,
+            workerName: targetWorker?.name || 'Alex Mercer',
+            zone: targetWorker?.zone || 'Tunnel B // Sector 7G',
+            lat: targetWorker?.lat || 51.505,
+            lng: targetWorker?.lng || -0.09,
+            teamName: dispatchPayload.teamName || team.name,
+            lead: dispatchPayload.lead || team.lead,
+            distanceMeters: dispatchPayload.distanceMeters || 180,
+            etaMinutes: dispatchPayload.etaMinutes || 2,
+            safeCorridor: 'Primary Surface Shaft Gate Alpha Corridor',
+            timestamp: new Date().toISOString()
+        };
+
+        // 1. Remove red danger signal & transition worker to RESCUE_EN_ROUTE
+        setWorkers(prev => prev.map(w => w.workerId === targetWorkerId ? { ...w, status: 'RESCUE_EN_ROUTE' } : w));
+        setAlerts(prev => prev.filter(a => a.workerId !== targetWorkerId));
+        setRescueTeams(prev => prev.map(t => t.id === team.id ? { ...t, status: 'DISPATCHED' } : t));
+
+        // 2. Pop up supervisor confirmation HUD with full location telemetry
+        setSupervisorDispatchToast(fullPayload);
+
+        // 3. Emit real-time WebSocket event to worker screen
+        socket.emit('dispatch_rescue_team', fullPayload);
+
+        // 4. Log to timeline
+        addTimelineEvent({
+            time: new Date().toLocaleTimeString(),
+            workerId: targetWorkerId,
+            zone: fullPayload.zone,
+            type: 'RESCUE_DISPATCHED',
+            text: `🚑 RESCUE SQUAD DISPATCHED: ${fullPayload.teamName} (Lead: ${fullPayload.lead}) deployed to ${targetWorkerId} at ${fullPayload.lat.toFixed(4)}°N, ${Math.abs(fullPayload.lng).toFixed(4)}°W (${fullPayload.zone}). ETA: ~${fullPayload.etaMinutes}m.`,
+            severity: 'INFO'
+        });
+    };
+
+    // Simulation Handlers
+    const handleSimulatorUpdateWorker = (updatedWorker) => {
+        setWorkers(prev => prev.map(w => w.workerId === updatedWorker.workerId ? { ...w, ...updatedWorker } : w));
+        socket.emit('worker_update', updatedWorker);
+    };
+
+    const handleSimulatorTriggerSOS = (sosPayload) => {
+        soundService.playEmergencyAlarm();
+        setAlerts(prev => [sosPayload, ...prev.filter(a => a.workerId !== sosPayload.workerId)]);
+        setWorkers(prev => prev.map(w => w.workerId === sosPayload.workerId ? { ...w, status: 'CRITICAL', ...sosPayload } : w));
+        setActiveSOSModalAlert(sosPayload);
+        socket.emit('emergency_alert', sosPayload);
+    };
+
+    const handleSimulatorResetNominal = () => {
+        setWorkers(INITIAL_WORKERS);
+        setAlerts([]);
+        setActiveSOSModalAlert(null);
+        setSupervisorDispatchToast(null);
+        setRescueTeams(INITIAL_RESCUE_TEAMS);
+        addTimelineEvent({
+            time: new Date().toLocaleTimeString(),
+            type: 'SYSTEM_RESET',
+            text: 'All workforce vitals and zones reset to nominal safe baseline.',
+            severity: 'INFO'
+        });
+    };
+
+    const handleSendBroadcast = (broadcastData) => {
+        socket.emit('emergency_broadcast', broadcastData);
+        addTimelineEvent({
+            time: new Date().toLocaleTimeString(),
+            type: 'BROADCAST_TRANSMITTED',
+            text: `Broadcast sent to ${broadcastData.target}: "${broadcastData.message}"`,
+            severity: 'WARNING'
+        });
+    };
 
     return (
-        <div
-            className="min-h-screen text-[#e2e8f0] font-sans"
-            style={{
-                backgroundImage: `linear-gradient(to bottom, rgba(2, 5, 11, 0.85), rgba(5, 10, 20, 0.95)), url('https://images.unsplash.com/photo-1518770660439-4636190af475?q=80&w=2070&auto=format&fit=crop')`,
-                backgroundSize: 'cover',
-                backgroundPosition: 'center',
-                backgroundAttachment: 'fixed'
-            }}
-        >
-            {/* Navbar Option */}
-            <nav className="glass-panel border-b border-[rgba(0,240,255,0.1)] px-6 py-4 flex justify-between items-center sticky top-0 z-50">
-                <div className="flex items-center gap-3">
-                    <ShieldCheck className="text-[var(--primary)] w-8 h-8" />
-                    <span className="text-xl font-bold tracking-wider text-white">Rescue<span className="text-[var(--primary)] text-glow">Link</span> Command</span>
-                </div>
-                <div className="flex items-center gap-6">
-                    <div className="flex items-center gap-2">
-                        <span className={`w-3 h-3 rounded-full ${isConnected ? 'bg-[var(--safe)] glow-safe animate-pulse' : 'bg-[var(--danger)] glow-danger'}`}></span>
-                        <span className={`text-sm font-semibold ${isConnected ? 'text-[var(--safe)]' : 'text-[var(--danger)]'}`}>
-                            {isConnected ? t("System Online") : "Connection Failed"}
-                        </span>
-                    </div>
-                    <button onClick={handleLogout} className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors">
-                        <LogOut className="w-5 h-5" /> {t("Logout")}
-                    </button>
-                </div>
-            </nav>
+        <div className="h-screen w-screen bg-[var(--bg-void)] text-[var(--text-primary)] font-body flex flex-col overflow-hidden select-none">
+            {/* Top Tactical Telemetry & Command Bar */}
+            <TopTacticalBar
+                currentUser={currentUser}
+                onSwitchUser={handleSwitchUser}
+                activeAlerts={alerts}
+                onOpenVoice={() => setShowVoiceModal(true)}
+                onOpenBroadcast={() => setShowBroadcastModal(true)}
+                onNavigate={handleNavigate}
+            />
 
-            {/* FULL SCREEN EMERGENCY POP-UP OVERLAY */}
-            {alerts.length > 0 && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[rgba(255,0,85,0.1)] pointer-events-none">
-                    <div className="absolute inset-0 border-[10px] border-[var(--danger)] animate-pulse opacity-50"></div>
+            {/* Main Application Shell: Console Rail + Center Viewport */}
+            <div className="flex-1 flex overflow-hidden">
+                {/* Slim Left Console Rail Navigation */}
+                <ConsoleRail
+                    activeSection={activeSection}
+                    onSelectSection={handleNavigate}
+                    activeAlertsCount={alerts.length}
+                />
+
+                {/* Main Dynamic Viewport */}
+                <main className="flex-1 flex flex-col overflow-hidden bg-[var(--bg-void)] relative">
+                    {activeSection === 'overview' && (
+                        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+                            {/* Center Column: Interactive Tactical Safety Map + Bottom Live Drawer */}
+                            <div className="flex-1 flex flex-col overflow-hidden p-3 gap-3">
+                                {/* Tactical Leaflet Safety Map */}
+                                <div className="flex-1 min-h-[380px] w-full relative">
+                                    <WorkerMap
+                                        workers={workers}
+                                        hazards={hazards}
+                                        geofences={geofences}
+                                        rescueTeams={rescueTeams}
+                                        selectedWorker={selectedWorker}
+                                        onSelectWorker={(w) => setSelectedWorker(w)}
+                                        onOpenDigitalTwin={(w) => setDigitalTwinWorker(w)}
+                                    />
+                                </div>
+
+                                {/* Bottom Expandable Drawer (Live Event Stream & Incident Timeline) */}
+                                <div
+                                    className={`bg-[var(--bg-panel)] border border-[var(--grid-line)] rounded-md transition-all duration-300 flex flex-col overflow-hidden ${isDrawerOpen ? 'h-[190px]' : 'h-10'
+                                        }`}
+                                >
+                                    {/* Drawer Header Tabs */}
+                                    <div className="bg-[var(--bg-panel-elevated)] border-b border-[var(--grid-line)] px-3 py-1.5 flex items-center justify-between z-10 select-none">
+                                        <div className="flex items-center gap-3">
+                                            <button
+                                                onClick={() => { soundService.playClick(); setBottomDrawerTab('stream'); }}
+                                                className={`text-[0.68rem] font-data font-bold uppercase tracking-wider flex items-center gap-1.5 transition-colors cursor-pointer ${bottomDrawerTab === 'stream'
+                                                    ? 'text-[var(--safety-cyan)]'
+                                                    : 'text-[var(--text-muted)] hover:text-white'
+                                                    }`}
+                                            >
+                                                <Activity className="w-3.5 h-3.5" />
+                                                <span>Live Event Stream</span>
+                                            </button>
+
+                                            <span className="text-[var(--grid-line)]">|</span>
+
+                                            <button
+                                                onClick={() => { soundService.playClick(); setBottomDrawerTab('timeline'); }}
+                                                className={`text-[0.68rem] font-data font-bold uppercase tracking-wider flex items-center gap-1.5 transition-colors cursor-pointer ${bottomDrawerTab === 'timeline'
+                                                    ? 'text-[var(--safety-cyan)]'
+                                                    : 'text-[var(--text-muted)] hover:text-white'
+                                                    }`}
+                                            >
+                                                <Clock className="w-3.5 h-3.5" />
+                                                <span>Incident Audit Timeline</span>
+                                            </button>
+                                        </div>
+
+                                        <button
+                                            onClick={() => setIsDrawerOpen(!isDrawerOpen)}
+                                            className="text-[var(--text-muted)] hover:text-white cursor-pointer"
+                                            title={isDrawerOpen ? 'Minimize Drawer' : 'Expand Drawer'}
+                                        >
+                                            {isDrawerOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+                                        </button>
+                                    </div>
+
+                                    {/* Drawer Body Content */}
+                                    {isDrawerOpen && (
+                                        <div className="flex-1 overflow-y-auto">
+                                            {bottomDrawerTab === 'stream' ? (
+                                                <LiveEventStream
+                                                    events={timelineEvents}
+                                                    onInspectEvent={(evt) => {
+                                                        const target = workers.find(w => w.workerId === evt.workerId);
+                                                        if (target) setSelectedWorker(target);
+                                                    }}
+                                                />
+                                            ) : (
+                                                <IncidentTimeline events={timelineEvents} activeAlert={alerts[0]} />
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Right Persistent Column: RescueLink AI Intelligence Panel */}
+                            <IntelligencePanel
+                                workers={workers}
+                                alerts={alerts}
+                                predictiveWarnings={predictiveWarnings}
+                                rescueTeams={rescueTeams}
+                                hazards={hazards}
+                                geofences={geofences}
+                                onSelectWorker={(w) => setSelectedWorker(w)}
+                                onDispatchResponder={handleDispatchResponder}
+                                onInspectWarning={(warn) => {
+                                    const target = workers.find(w => w.workerId === warn.workerId);
+                                    if (target) setSelectedWorker(target);
+                                }}
+                            />
+                        </div>
+                    )}
+
+                    {/* Section: Tactical Map (Fullscreen Mode) */}
+                    {activeSection === 'map' && (
+                        <div className="flex-1 p-4">
+                            <WorkerMap
+                                workers={workers}
+                                hazards={hazards}
+                                geofences={geofences}
+                                rescueTeams={rescueTeams}
+                                selectedWorker={selectedWorker}
+                                onSelectWorker={(w) => setSelectedWorker(w)}
+                                onOpenDigitalTwin={(w) => setDigitalTwinWorker(w)}
+                            />
+                        </div>
+                    )}
+
+                    {/* Section: Worker Live Roster */}
+                    {activeSection === 'workers' && (
+                        <div className="flex-1 p-4 md:p-6 overflow-y-auto">
+                            <div className="max-w-6xl mx-auto space-y-4">
+                                <div className="border-b border-[var(--grid-line)] pb-3 flex items-center justify-between">
+                                    <div>
+                                        <h2 className="font-data font-bold text-lg text-[var(--text-primary)]">
+                                            WORKFORCE LIVE TELEMETRY ROSTER
+                                        </h2>
+                                        <p className="text-xs text-[var(--text-muted)] font-data">
+                                            Real-time bio-sensors, environmental exposures, and AI risk indexes for all deployed personnel.
+                                        </p>
+                                    </div>
+                                </div>
+                                <WorkerTable
+                                    workers={workers}
+                                    onSelectWorker={(w) => setDigitalTwinWorker(w)}
+                                />
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Section: Alerts & Incident Management */}
+                    {activeSection === 'alerts' && (
+                        <div className="flex-1 p-4 md:p-6 overflow-y-auto">
+                            <div className="max-w-4xl mx-auto space-y-4">
+                                <div className="border-b border-[var(--grid-line)] pb-3">
+                                    <h2 className="font-data font-bold text-lg text-[var(--text-primary)]">
+                                        ACTIVE EMERGENCY ALERTS & INCIDENT AUDIT
+                                    </h2>
+                                    <p className="text-xs text-[var(--text-muted)] font-data">
+                                        Monitor triage workflows, acknowledge emergencies, and dispatch rescue teams.
+                                    </p>
+                                </div>
+
+                                {alerts.length === 0 ? (
+                                    <div className="p-8 rounded bg-[var(--bg-panel)] border border-[var(--grid-line)] text-center font-data text-xs text-[var(--text-muted)]">
+                                        ✓ No critical SOS emergencies active at this time. All units secured.
+                                    </div>
+                                ) : (
+                                    alerts.map((alertItem) => (
+                                        <div
+                                            key={alertItem.workerId}
+                                            className="p-4 rounded bg-[rgba(239,68,68,0.1)] border border-[var(--safety-red)] flex items-center justify-between gap-4 font-data text-xs"
+                                        >
+                                            <div>
+                                                <div className="font-bold text-sm text-[var(--safety-red)]">
+                                                    CRITICAL SOS: {alertItem.workerId} ({alertItem.name})
+                                                </div>
+                                                <div className="text-[var(--text-secondary)] mt-1">
+                                                    Zone: <strong>{alertItem.zone}</strong> • Temp: <strong>{alertItem.envTemp}°C</strong> • Gas: <strong>{alertItem.gasPpm || 48} PPM</strong>
+                                                </div>
+                                            </div>
+
+                                            <button
+                                                onClick={() => setActiveSOSModalAlert(alertItem)}
+                                                className="btn-tactical btn-tactical-danger text-xs px-4 py-2"
+                                            >
+                                                OPEN INCIDENT HUD 🚨
+                                            </button>
+                                        </div>
+                                    ))
+                                )}
+
+                                <div className="mt-6">
+                                    <IncidentTimeline events={timelineEvents} />
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Section: Zones & Geofencing */}
+                    {activeSection === 'zones' && (
+                        <div className="flex-1 p-4 md:p-6 overflow-y-auto">
+                            <div className="max-w-5xl mx-auto">
+                                <GeofenceManager
+                                    geofences={geofences}
+                                    setGeofences={setGeofences}
+                                />
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Section: Safety Analytics */}
+                    {activeSection === 'analytics' && (
+                        <SafetyAnalytics workers={workers} alerts={alerts} />
+                    )}
+
+                    {/* Section: Emergency Broadcast */}
+                    {activeSection === 'broadcast' && (
+                        <div className="flex-1 p-4 md:p-6 flex items-center justify-center">
+                            <div className="w-full max-w-lg">
+                                <EmergencyBroadcastModal
+                                    workers={workers}
+                                    onSendBroadcast={handleSendBroadcast}
+                                    onClose={() => setActiveSection('overview')}
+                                />
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Section: Simulation Sandbox */}
+                    {activeSection === 'simulator' && (
+                        <div className="flex-1 p-4 md:p-6 flex items-center justify-center">
+                            <div className="w-full max-w-2xl">
+                                <ScenarioSimulator
+                                    workers={workers}
+                                    onUpdateWorker={handleSimulatorUpdateWorker}
+                                    onTriggerSOS={handleSimulatorTriggerSOS}
+                                    onAddTimelineEvent={addTimelineEvent}
+                                    onResetNominal={handleSimulatorResetNominal}
+                                    onClose={() => setActiveSection('overview')}
+                                />
+                            </div>
+                        </div>
+                    )}
+                </main>
+            </div>
+
+            {/* Bottom Status Bar */}
+            <footer className="h-[38px] bg-[var(--bg-panel)] border-t border-[var(--grid-line)] px-4 flex items-center justify-between text-[0.65rem] font-data text-[var(--text-muted)] select-none">
+                <div className="flex items-center gap-3">
+                    <span>SECURITY: <strong className="text-[var(--safety-green)]">ENCRYPTED INDUSTRIAL MESH</strong></span>
+                    <span>•</span>
+                    <span>SECTOR: <strong className="text-[var(--text-primary)]">SITE ALPHA // SHAFT 3</strong></span>
+                    <span>•</span>
+                    <span>TELEMETRY: <strong className="text-[var(--safety-cyan)]">99.8% PACKET RECEIPT</strong></span>
                 </div>
+
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => setActiveSection('simulator')}
+                        className="text-[var(--safety-amber)] hover:underline flex items-center gap-1 cursor-pointer font-bold"
+                    >
+                        <Sparkles className="w-3 h-3 animate-pulse" />
+                        <span>DEMO SIMULATOR</span>
+                    </button>
+                    <span>•</span>
+                    <span>v2.5.0-COMMAND</span>
+                </div>
+            </footer>
+
+            {/* Emergency Context Modal */}
+            {activeSOSModalAlert && (
+                <EmergencyContextModal
+                    alert={activeSOSModalAlert}
+                    worker={workers.find(w => w.workerId === activeSOSModalAlert.workerId)}
+                    onAcknowledge={handleAcknowledgeAlert}
+                    onResolve={handleResolveAlert}
+                    onDispatch={handleDispatchResponder}
+                    onOpenVoice={() => setShowVoiceModal(true)}
+                    onClose={() => setActiveSOSModalAlert(null)}
+                />
             )}
 
-            <main className="p-6 max-w-7xl mx-auto space-y-6 relative z-10">
-                {/* Overview Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                    {[
-                        { title: t("Active Workers"), value: workers.length, icon: <Users className="text-[var(--primary)] w-7 h-7" />, color: "border-[var(--primary)]" },
-                        { title: t("Critical Alerts"), value: criticalCount, icon: <BellRing className={`${criticalCount > 0 ? 'text-[var(--danger)] animate-bounce' : 'text-gray-500'} w-7 h-7`} />, color: criticalCount > 0 ? "border-[var(--danger)] glow-danger" : "border-gray-800" },
-                        { title: t("Zones Monitored"), value: "4", icon: <Crosshair className="text-[var(--safe)] w-7 h-7" />, color: "border-[var(--safe)]" },
-                        { title: t("SOS Alerts Today"), value: alerts.length, icon: <AlertTriangle className={`${alerts.length > 0 ? 'text-[var(--warning)] animate-pulse' : 'text-gray-500'} w-7 h-7`} />, color: alerts.length > 0 ? "border-[var(--warning)] glow-warning" : "border-gray-800" }
-                    ].map((card, index) => (
-                        <div key={index} className={`glass-panel p-6 rounded-2xl flex items-center justify-between border ${card.color} transition-all duration-300 hover:-translate-y-1`}>
-                            <div>
-                                <p className="text-sm text-gray-400 font-semibold mb-1">{card.title}</p>
-                                <h3 className="text-3xl font-black text-white">{card.value}</h3>
-                            </div>
-                            <div className="bg-[#050a14] p-3 rounded-xl border border-[rgba(255,255,255,0.05)]">
-                                {card.icon}
-                            </div>
-                        </div>
-                    ))}
-                </div>
+            {/* Supervisor Dispatch Toast Modal (Showing all target location details) */}
+            {supervisorDispatchToast && (
+                <SupervisorDispatchToastModal
+                    dispatchData={supervisorDispatchToast}
+                    onClose={() => setSupervisorDispatchToast(null)}
+                />
+            )}
 
-                {/* Dashboard Grid */}
-                <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                    {/* Map and Log column */}
-                    <div className="xl:col-span-1 space-y-6 flex flex-col">
-                        <WorkerMap workers={workers} />
-                        <EmergencyLog logs={alerts} onAcknowledge={handleAcknowledge} />
-                    </div>
+            {showVoiceModal && (
+                <VoiceIntercomModal
+                    currentUser={currentUser}
+                    onTriggerEmergency={handleSimulatorTriggerSOS}
+                    onClose={() => setShowVoiceModal(false)}
+                />
+            )}
 
-                    {/* Table column */}
-                    <div className="xl:col-span-2 space-y-6">
-                        <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-2xl font-bold flex items-center gap-2">
-                                <Users className="text-[var(--primary)]" />
-                                {t("Live Roster")}
-                            </h2>
-                            <div className="flex gap-4 text-sm font-semibold">
-                                <span className="flex items-center gap-1"><span className="w-2 h-2 bg-[var(--danger)] rounded-full animate-pulse"></span> {criticalCount} {t("Critical")}</span>
-                                <span className="flex items-center gap-1"><span className="w-2 h-2 bg-[var(--warning)] rounded-full"></span> {warningCount} {t("Warning")}</span>
-                            </div>
+            {showBroadcastModal && (
+                <EmergencyBroadcastModal
+                    workers={workers}
+                    onSendBroadcast={handleSendBroadcast}
+                    onClose={() => setShowBroadcastModal(false)}
+                />
+            )}
+
+            {digitalTwinWorker && (
+                <div className="fixed inset-0 z-[1000] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="w-full max-w-2xl bg-[var(--bg-panel)] border border-[var(--safety-cyan)] rounded-lg overflow-hidden shadow-2xl">
+                        <div className="p-3 bg-[var(--bg-panel-elevated)] border-b border-[var(--grid-line)] flex items-center justify-between font-data text-xs">
+                            <span className="font-bold text-[var(--safety-cyan)]">
+                                WORKER DIGITAL TWIN TELEMETRY // {digitalTwinWorker.workerId}
+                            </span>
+                            <button
+                                onClick={() => setDigitalTwinWorker(null)}
+                                className="text-white hover:text-red-400 cursor-pointer font-bold"
+                            >
+                                ✕
+                            </button>
                         </div>
-                        <WorkerTable workers={workers} />
+                        <div className="p-4 max-h-[80vh] overflow-y-auto">
+                            <WorkerDigitalTwin
+                                worker={digitalTwinWorker}
+                                onClose={() => setDigitalTwinWorker(null)}
+                            />
+                        </div>
                     </div>
                 </div>
-            </main>
+            )}
         </div>
     );
 };

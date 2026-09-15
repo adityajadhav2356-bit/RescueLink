@@ -1,348 +1,391 @@
-import React, { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { ShieldAlert, Battery, Wifi, Thermometer, Wind, CheckCircle2, LogOut, Volume2, Mic, MicOff } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { ShieldAlert, Battery, Wifi, Thermometer, Wind, CheckCircle2, Volume2, Mic, MicOff, Heart, Radio, Activity, AlertTriangle, UserCheck, Flame, Send, ArrowRight, ShieldCheck, Clock, MapPin, Truck } from 'lucide-react';
 import { io } from 'socket.io-client';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { calculateWorkerRisk } from '../services/riskEngine';
+import { soundService } from '../services/soundService';
+import AnalogRiskGauge from '../components/AnalogRiskGauge';
+import WorkerDigitalTwin from '../components/WorkerDigitalTwin';
+import ExposureChart from '../components/ExposureChart';
+import RescueDispatchedNotificationModal from '../components/RescueDispatchedNotificationModal';
 
-// Auto-detect the server's network IP based on where the frontend is served from
 const SERVER_URL = import.meta.env.VITE_BACKEND_URL || `http://${window.location.hostname}:5000`;
 const socket = io(SERVER_URL, { autoConnect: false });
 
-const mockWorkers = [
-    { workerId: 'W-042', name: 'Alex Mercer', zone: 'Sector 7G', status: 'SAFE', envTemp: 32, airQuality: 'Good', battery: 85 },
-    { workerId: 'W-011', name: 'Sarah Connor', zone: 'Tunnel B', status: 'WARNING', envTemp: 38, airQuality: 'Fair', battery: 45 },
-    { workerId: 'W-007', name: 'James Bond', zone: 'Deep Shaft 3', status: 'SAFE', envTemp: 28, airQuality: 'Good', battery: 90 }
-];
-
-const WorkerDashboard = ({ user }) => {
+export const WorkerDashboard = ({ user = { id: 'W-042', name: 'Alex Mercer' } }) => {
     const navigate = useNavigate();
     const { t, i18n } = useTranslation();
-    const initialData = mockWorkers.find(w => w.workerId === user?.id) || {
-        name: `Worker ${user?.id || 'Unknown'}`,
-        workerId: user?.id || 'W-XXX',
-        zone: 'Unassigned',
-        battery: 100,
-        connectivity: 'Strong',
-        envTemp: 25,
-        airQuality: 'Good',
-        status: 'SAFE'
-    };
 
-    const [data, setData] = useState(initialData);
+    const [workerData, setWorkerData] = useState({
+        workerId: user?.id || 'W-042',
+        name: user?.name || 'Alex Mercer',
+        zone: 'Sector 7G',
+        status: 'SAFE', // 'SAFE' | 'WARNING' | 'CRITICAL' | 'RESCUE_EN_ROUTE'
+        envTemp: 31,
+        airQuality: 'Good',
+        gasPpm: 12,
+        battery: 84,
+        connectivity: 'Strong',
+        heartRate: 76,
+        immobilityMinutes: 0,
+        lat: 51.505,
+        lng: -0.09
+    });
+
     const [sosActive, setSosActive] = useState(false);
+    const [rescueDispatchInfo, setRescueDispatchInfo] = useState(null);
+    const [showRescueModal, setShowRescueModal] = useState(false);
+
     const [tasks, setTasks] = useState([
-        { id: 1, text: 'Inspect ventilation shaft B', completed: false },
-        { id: 2, text: 'Calibrate pressure sensors', completed: true },
-        { id: 3, text: 'Report to surface at 17:00', completed: false },
+        { id: 1, text: 'Inspect ventilation damper shaft 4B', completed: true },
+        { id: 2, text: 'Calibrate pressure & gas telemetry nodes', completed: false },
+        { id: 3, text: 'Perform muster point emergency check', completed: false }
     ]);
     const [isListening, setIsListening] = useState(false);
-    const [transcriptText, setTranscriptText] = useState('');
-    const [isConnected, setIsConnected] = useState(socket.connected);
-    const recognitionRef = React.useRef(null);
-    const isListeningRef = React.useRef(isListening);
+    const [voiceTranscript, setVoiceTranscript] = useState('');
+    const [showDigitalTwin, setShowDigitalTwin] = useState(false);
+    const [activeTab, setActiveTab] = useState('telemetry'); // 'telemetry' | 'tasks' | 'route'
 
-    React.useEffect(() => {
-        isListeningRef.current = isListening;
-    }, [isListening]);
+    const risk = calculateWorkerRisk(workerData, workerData);
 
-    const getLangCode = (lng) => {
-        const map = {
-            en: 'en-US', hi: 'hi-IN', bn: 'bn-IN', te: 'te-IN', mr: 'mr-IN',
-            ta: 'ta-IN', ur: 'ur-PK', gu: 'gu-IN', kn: 'kn-IN', ml: 'ml-IN', pa: 'pa-IN'
-        };
-        const shortLng = (lng || 'en').split('-')[0];
-        return map[shortLng] || 'en-US';
-    };
-
-    const currentLangCode = getLangCode(i18n.language);
-
-    // Initialize Speech Recognition logic once
+    // Socket link
     useEffect(() => {
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) {
-            setTranscriptText("Speech Recognition not supported. Use Google Chrome.");
-            return;
-        }
-
-        const recognition = new SpeechRecognition();
-        recognitionRef.current = recognition;
-        recognition.continuous = true;
-        recognition.interimResults = true;
-
-        recognition.onresult = (event) => {
-            let finalTranscript = '';
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-                finalTranscript += event.results[i][0].transcript.toLowerCase() + ' ';
-            }
-
-            setTranscriptText(finalTranscript.trim());
-
-            const text = finalTranscript.toLowerCase();
-            const triggers = ['help', 'sos', 'emergency', 'मदद', 'बचाओ', 'madad', 'bachao', 'test'];
-
-            if (triggers.some(trigger => text.includes(trigger))) {
-                setSosActive(prevSos => {
-                    if (!prevSos) {
-                        setData(currentData => {
-                            if (currentData.status !== 'CRITICAL') {
-                                socket.emit('emergency_alert', {
-                                    workerId: currentData.workerId,
-                                    name: currentData.name,
-                                    zone: currentData.zone,
-                                    type: 'Voice SOS Triggered',
-                                    time: new Date().toISOString()
-                                });
-                                return { ...currentData, status: 'CRITICAL' };
-                            }
-                            return currentData;
-                        });
-                    }
-                    return true;
-                });
-            }
-        };
-
-        recognition.onerror = (event) => {
-            if (event.error === 'no-speech') return; // Ignore silent periods safely
-            setTranscriptText(`Mic Error: ${event.error}`);
-            setIsListening(false);
-        };
-
-        recognition.onend = () => {
-            if (isListeningRef.current) {
-                try {
-                    recognitionRef.current.start();
-                } catch (e) { }
-            }
-        };
-
-        return () => {
-            if (recognitionRef.current) {
-                recognitionRef.current.stop();
-            }
-        };
-    }, []);
-
-    // Handle language changes and start/stop triggers
-    useEffect(() => {
-        if (!recognitionRef.current) return;
-        recognitionRef.current.lang = currentLangCode;
-
-        if (isListening) {
-            try {
-                recognitionRef.current.start();
-                setTranscriptText("Mic active. Say 'Help', 'SOS', 'Madad', 'Bachao'...");
-            } catch (e) {
-                console.error("Mic start error", e);
-            }
-        } else {
-            try {
-                recognitionRef.current.stop();
-            } catch (e) { }
-            if (!transcriptText.startsWith("Mic Error")) {
-                setTranscriptText("");
-            }
-        }
-    }, [isListening, currentLangCode]); useEffect(() => {
         socket.connect();
+        socket.emit('request_initial_data');
 
-        socket.on('connect', () => { setIsConnected(true); });
-        socket.on('disconnect', () => { setIsConnected(false); });
-
-        // Simulate real-time updates
-        const interval = setInterval(() => {
-            setData(prev => {
-                const newData = {
-                    ...prev,
-                    envTemp: prev.envTemp + (Math.random() > 0.5 ? 1 : -1),
-                    battery: Math.max(0, prev.battery - 0.1)
-                };
-                socket.emit('worker_update', newData);
-                return newData;
-            });
-        }, 5000);
-
-        socket.on('alert_resolved', (resolvedData) => {
-            if (resolvedData.workerId === initialData.workerId) {
-                setData(prev => ({ ...prev, status: 'SAFE' }));
-                setSosActive(false); // Turn off the SOS button effect
+        socket.on('worker_updated', (data) => {
+            if (data.workerId === workerData.workerId) {
+                setWorkerData(prev => ({ ...prev, ...data }));
             }
         });
 
+        // Listen for Rescue Team Dispatched by Supervisor
+        socket.on('rescue_team_dispatched', (dispatchData) => {
+            if (dispatchData.workerId === workerData.workerId || !dispatchData.workerId) {
+                soundService.playAcknowledge();
+                // Remove the danger red strobe and update state to RESCUE_EN_ROUTE
+                setSosActive(false);
+                setWorkerData(prev => ({
+                    ...prev,
+                    status: 'RESCUE_EN_ROUTE'
+                }));
+                setRescueDispatchInfo(dispatchData);
+                setShowRescueModal(true);
+            }
+        });
+
+        socket.on('alert_resolved', (data) => {
+            if (data.workerId === workerData.workerId) {
+                soundService.playAcknowledge();
+                setSosActive(false);
+                setWorkerData(prev => ({ ...prev, status: 'SAFE' }));
+                setShowRescueModal(false);
+            }
+        });
+
+        socket.on('emergency_broadcast_received', (broadcast) => {
+            soundService.playEmergencyAlarm();
+            alert(`⚠️ EMERGENCY COMMAND BROADCAST:\n\n${broadcast.message}`);
+        });
+
         return () => {
-            clearInterval(interval);
-            socket.off('connect');
-            socket.off('disconnect');
-            socket.off('alert_resolved');
             socket.disconnect();
         };
-    }, []);
+    }, [workerData.workerId]);
 
-    const handleSOS = () => {
+    // Handle SOS Trigger
+    const triggerSOS = () => {
+        soundService.playEmergencyAlarm();
         setSosActive(true);
-        setData(prev => ({ ...prev, status: 'CRITICAL' })); // Instant UI update on worker side
-        socket.emit('emergency_alert', {
-            workerId: data.workerId,
-            name: data.name,
-            zone: data.zone,
-            type: 'SOS Button Pressed',
-            time: new Date().toISOString()
-        });
+        const updated = {
+            ...workerData,
+            status: 'CRITICAL',
+            envTemp: workerData.envTemp + 4,
+            riskScore: 92
+        };
+        setWorkerData(updated);
 
-        // The SOS effect will now remain indefinitely until the supervisor acknowledges it
+        socket.emit('emergency_alert', {
+            workerId: workerData.workerId,
+            name: workerData.name,
+            zone: workerData.zone,
+            envTemp: updated.envTemp,
+            airQuality: updated.airQuality,
+            gasPpm: updated.gasPpm || 48,
+            battery: updated.battery,
+            heartRate: updated.heartRate || 120,
+            riskScore: 92,
+            severity: 'CRITICAL',
+            timestamp: new Date().toISOString(),
+            lat: workerData.lat,
+            lng: workerData.lng
+        });
+    };
+
+    const cancelSOS = () => {
+        soundService.playAcknowledge();
+        setSosActive(false);
+        setWorkerData(prev => ({ ...prev, status: 'SAFE' }));
+        socket.emit('resolve_alert', { workerId: workerData.workerId });
     };
 
     const toggleTask = (id) => {
-        setTasks(tasks.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
+        soundService.playClick();
+        setTasks(prev => prev.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
     };
 
-    const handleLogout = () => {
-        navigate('/login');
-    };
-
-    const speakGuidance = () => {
-        if (!window.speechSynthesis) return;
-        window.speechSynthesis.cancel(); // Cancel any ongoing speech
-
-        let introText = "Welcome to Rescue Link. Your status is currently Safe. To trigger an emergency alert, press the large red SOS button in the center of the screen, or say the word 'Help'.";
-
-        const shortLng = (i18n.language || 'en').split('-')[0];
-        if (shortLng === 'hi') introText = "रेस्क्यू लिंक में आपका स्वागत है। आपकी स्थिति सुरक्षित है। आपातकाल के लिए, लाल बटन दबाएं या 'मदद' बोलें।";
-        else if (shortLng === 'bn') introText = "রেসকিউ লিঙ্কে স্বাগতম। আপনার অবস্থা নিরাপদ। জরুরি অবস্থার জন্য 'বাঁচাও' বলুন।";
-        else if (shortLng === 'mr') introText = "रेस्क्यू लिंक मध्ये आपले स्वागत आहे। आपत्कालीन परिस्थितीसाठी 'मदत' म्हणा।";
-        else if (shortLng === 'gu') introText = "રેસ્ક્યુ લિંકમાં આપનું સ્વાગત છે. કટોકટી માટે સપાટી પર લાલ બટન દબાવો અથવા 'મદદ' બોલો.";
-        else if (shortLng === 'te') introText = "రెస్క్యూ లింక్‌కు స్వాగతం. మీ స్థితి సురక్షితం. అత్యవసర పరిస్థితి కోసం ఎర్ర బటన్‌ను నొక్కండి లేదా 'హెల్ప్' అని చెప్పండి.";
-
-        const msg = new SpeechSynthesisUtterance();
-        msg.text = introText;
-        msg.lang = currentLangCode; // Use the matching accent/voice engine
-        msg.rate = 0.9;
-        window.speechSynthesis.speak(msg);
-    };
-
-    const statusColor = data.status === 'SAFE' ? 'text-[var(--safe)]' : data.status === 'WARNING' ? 'text-[var(--warning)]' : 'text-[var(--danger)]';
-    const statusGlow = data.status === 'SAFE' ? 'glow-safe' : data.status === 'WARNING' ? 'glow-warning' : 'glow-danger';
+    const isCritical = (workerData.status === 'CRITICAL' || sosActive) && workerData.status !== 'RESCUE_EN_ROUTE';
+    const isRescueEnRoute = workerData.status === 'RESCUE_EN_ROUTE';
 
     return (
-        <div
-            className="min-h-screen text-white p-4 font-sans safe-area-pt"
-            style={{
-                backgroundImage: `linear-gradient(to bottom, rgba(2, 5, 11, 0.85), rgba(5, 10, 20, 0.95)), url('https://images.unsplash.com/photo-1518770660439-4636190af475?q=80&w=2070&auto=format&fit=crop')`,
-                backgroundSize: 'cover',
-                backgroundPosition: 'center',
-                backgroundAttachment: 'fixed'
-            }}
-        >
-            {/* Header */}
-            <header className="flex justify-between items-center mb-6 pt-4 glass-panel p-4 rounded-2xl">
-                <div>
-                    <h1 className="text-xl font-bold">{data.name}</h1>
-                    <p className="text-sm text-gray-400">ID: {data.workerId} | Zone: {data.zone}</p>
-                    <div className="flex items-center gap-2 mt-1">
-                        <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-[var(--safe)] animate-pulse' : 'bg-[var(--danger)]'}`}></span>
-                        <span className={`text-xs font-semibold ${isConnected ? 'text-[var(--safe)]' : 'text-[var(--danger)]'}`}>
-                            {isConnected ? "Linked to Command" : "Offline"}
-                        </span>
+        <div className="min-h-screen w-full bg-[var(--bg-void)] text-[var(--text-primary)] font-data text-xs pb-12 select-none flex flex-col">
+            {/* Top Tactical Mobile Header */}
+            <header className="bg-[var(--bg-panel)] border-b border-[var(--grid-line)] px-4 py-3 flex items-center justify-between sticky top-0 z-50">
+                <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded bg-[rgba(0,229,255,0.12)] border border-[var(--safety-cyan)] flex items-center justify-center text-[var(--safety-cyan)]">
+                        <Radio className="w-4 h-4" />
+                    </div>
+                    <div>
+                        <div className="font-bold text-xs text-[var(--text-primary)] tracking-wide flex items-center gap-1.5">
+                            RESCUELINK <span className="text-[var(--safety-cyan)] text-[0.62rem]">OPERATOR</span>
+                        </div>
+                        <div className="text-[0.65rem] text-[var(--text-muted)]">
+                            {workerData.workerId} // {workerData.name} ({workerData.zone})
+                        </div>
                     </div>
                 </div>
-                <div className="flex items-center gap-3">
-                    <div className={`px-4 py-2 rounded-full font-bold text-sm tracking-wider ${statusColor} ${statusGlow} bg-[rgba(0,0,0,0.5)] border border-current`}>
-                        {t(data.status)}
-                    </div>
+
+                <div className="flex items-center gap-2">
                     <button
-                        onClick={speakGuidance}
-                        className={`p-2 rounded-full transition-colors bg-[rgba(255,255,255,0.05)] hover:bg-[rgba(255,255,255,0.1)] text-gray-300`}
-                        title="Voice Guidance"
+                        onClick={() => navigate('/supervisor')}
+                        className="btn-tactical text-[0.65rem] py-1 px-2 text-[var(--safety-cyan)]"
                     >
-                        <Volume2 className="w-5 h-5" />
-                    </button>
-                    <button
-                        onClick={() => setIsListening(!isListening)}
-                        className={`p-2 rounded-full transition-colors ${isListening ? 'bg-[rgba(0,240,255,0.2)] text-[var(--primary)] shadow-[0_0_15px_rgba(0,240,255,0.4)]' : 'bg-[rgba(255,255,255,0.05)] hover:bg-[rgba(255,255,255,0.1)] text-gray-300'}`}
-                        title="Toggle Voice Assistant"
-                    >
-                        {isListening ? <Mic className="w-5 h-5 animate-pulse" /> : <MicOff className="w-5 h-5" />}
-                    </button>
-                    <button onClick={handleLogout} className="p-2 rounded-full bg-[rgba(255,255,255,0.05)] hover:bg-[rgba(255,255,255,0.1)] text-gray-300 transition-colors">
-                        <LogOut className="w-5 h-5" />
+                        COMMAND HUB 🛡️
                     </button>
                 </div>
             </header>
 
-            {/* Voice Assistant Feedback */}
-            {isListening && (
-                <div className="flex justify-center mb-4">
-                    <div className="bg-[rgba(0,240,255,0.1)] border border-[rgba(0,240,255,0.3)] px-4 py-2 rounded-full flex items-center gap-2 max-w-sm w-full">
-                        <Mic className="w-4 h-4 text-[var(--primary)] animate-pulse" />
-                        <span className="text-sm text-gray-300 truncate font-mono">
-                            {transcriptText ? `> ${transcriptText}` : "Say 'Help' or 'मदद'..."}
-                        </span>
+            {/* Emergency Strobe Banner if Critical */}
+            {isCritical && (
+                <div className="bg-[var(--safety-red)] text-white px-4 py-2.5 flex items-center justify-between emergency-strobe">
+                    <div className="flex items-center gap-2 font-bold text-xs uppercase">
+                        <ShieldAlert className="w-4 h-4 animate-ping" />
+                        <span>CRITICAL SOS BEACON BROADCASTING</span>
                     </div>
+                    <button
+                        onClick={cancelSOS}
+                        className="bg-black/40 hover:bg-black/60 text-white px-2.5 py-1 rounded text-[0.68rem] font-bold cursor-pointer"
+                    >
+                        CANCEL SOS ✕
+                    </button>
                 </div>
             )}
 
-            {/* Main SOS Button */}
-            <div className="flex justify-center my-8 relative">
-                <motion.button
-                    whileTap={{ scale: 0.9 }}
-                    onClick={handleSOS}
-                    className={`relative w-48 h-48 rounded-full flex flex-col items-center justify-center border-4 ${sosActive ? 'border-[var(--danger)] bg-[rgba(255,0,85,0.2)]' : 'border-[#ff005540] bg-[rgba(255,0,85,0.05)]'} transition-all`}
-                >
-                    {/* Animated rings */}
-                    <div className={`absolute inset-0 rounded-full border-2 border-[var(--danger)] opacity-50 ${sosActive ? 'animate-ping' : ''}`}></div>
-                    <div className={`absolute inset-[-20px] rounded-full border border-[var(--danger)] opacity-20 ${sosActive ? 'animate-pulse' : ''}`}></div>
-
-                    <ShieldAlert className={`w-20 h-20 ${sosActive ? 'text-[var(--danger)] animate-bounce' : 'text-[var(--danger)] opacity-80'}`} />
-                    <span className={`text-2xl font-black mt-2 tracking-widest ${sosActive ? 'text-[var(--danger)] text-glow' : 'text-[var(--danger)] opacity-80'}`}>SOS</span>
-                </motion.button>
-            </div>
-
-            {/* Grid Stats */}
-            <div className="grid grid-cols-2 gap-4 mb-6">
-                <div className="glass-panel p-4 rounded-2xl flex flex-col items-center">
-                    <Battery className={`w-8 h-8 mb-2 ${data.battery > 20 ? 'text-[var(--safe)]' : 'text-[var(--danger)]'}`} />
-                    <span className="text-2xl font-bold">{data.battery.toFixed(0)}%</span>
-                    <span className="text-xs text-gray-400">{t("Power")}</span>
-                </div>
-                <div className="glass-panel p-4 rounded-2xl flex flex-col items-center">
-                    <Wifi className={`w-8 h-8 mb-2 text-[var(--primary)]`} />
-                    <span className="text-xl font-bold">{data.connectivity}</span>
-                    <span className="text-xs text-gray-400">{t("Signal")}</span>
-                </div>
-                <div className="glass-panel p-4 rounded-2xl flex flex-col items-center">
-                    <Thermometer className={`w-8 h-8 mb-2 ${data.envTemp < 40 ? 'text-[var(--safe)]' : 'text-[var(--danger)]'}`} />
-                    <span className="text-2xl font-bold">{data.envTemp.toFixed(1)}°C</span>
-                    <span className="text-xs text-gray-400">{t("Temperature")}</span>
-                </div>
-                <div className="glass-panel p-4 rounded-2xl flex flex-col items-center">
-                    <Wind className={`w-8 h-8 mb-2 text-[var(--safe)]`} />
-                    <span className="text-xl font-bold">{data.airQuality}</span>
-                    <span className="text-xs text-gray-400">{t("Air Quality")}</span>
-                </div>
-            </div>
-
-            {/* Task Checklist */}
-            <div className="glass-panel rounded-2xl p-5 mb-8">
-                <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                    <CheckCircle2 className="text-[var(--primary)]" />
-                    {t("Daily Tasks")}
-                </h3>
-                <div className="space-y-3">
-                    {tasks.map(task => (
-                        <div
-                            key={task.id}
-                            onClick={() => toggleTask(task.id)}
-                            className="flex items-center justify-between p-3 rounded-xl bg-[#050a14] border border-[rgba(0,240,255,0.1)] active:scale-[0.98] transition-all cursor-pointer"
-                        >
-                            <span className={`text-sm ${task.completed ? 'text-gray-500 line-through' : 'text-gray-200'}`}>{t(task.text)}</span>
-                            <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${task.completed ? 'border-[var(--safe)] bg-[var(--safe)]' : 'border-gray-500'}`}>
-                                {task.completed && <CheckCircle2 className="text-[#050a14] w-4 h-4" />}
-                            </div>
+            {/* Reassuring Rescue Force En Route Banner (Replaces Red Danger) */}
+            {isRescueEnRoute && (
+                <div className="bg-gradient-to-r from-cyan-900 to-emerald-900 border-b border-[var(--safety-cyan)] text-white px-4 py-2.5 flex items-center justify-between shadow-lg animate-in slide-in-from-top-2">
+                    <div className="flex items-center gap-2.5 font-bold text-xs">
+                        <Truck className="w-4.5 h-4.5 text-[var(--safety-cyan)] animate-bounce" />
+                        <div>
+                            <span className="text-[var(--safety-cyan)] uppercase tracking-wider block font-mono">
+                                🚑 RESCUE FORCE IS ON THE WAY!
+                            </span>
+                            <span className="text-[0.65rem] opacity-90 font-normal">
+                                Team: Rapid Response Beta • ETA: ~2 min • Stand by at coordinates
+                            </span>
                         </div>
-                    ))}
+                    </div>
+                    <button
+                        onClick={() => setShowRescueModal(true)}
+                        className="btn-tactical btn-tactical-primary text-[0.65rem] py-1 px-2.5"
+                    >
+                        VIEW DETAILS 📋
+                    </button>
                 </div>
-            </div>
+            )}
+
+            {/* Main Content Area */}
+            <main className="max-w-xl w-full mx-auto p-4 space-y-4 flex-1">
+                {/* Giant Tactile SOS Button */}
+                <div className="flex flex-col items-center justify-center p-6 rounded-lg bg-[var(--bg-panel)] border border-[var(--grid-line)] shadow-2xl relative overflow-hidden">
+                    <div className="absolute top-2 left-3 text-[0.65rem] text-[var(--text-muted)] uppercase tracking-wider">
+                        EMERGENCY DISPATCH TRIGGER
+                    </div>
+
+                    <button
+                        onClick={isCritical ? cancelSOS : triggerSOS}
+                        className={`w-36 h-36 rounded-full flex flex-col items-center justify-center transition-all transform active:scale-95 cursor-pointer shadow-2xl relative ${isCritical
+                            ? 'bg-[var(--safety-red)] text-white emergency-strobe border-4 border-white'
+                            : isRescueEnRoute
+                                ? 'bg-gradient-to-br from-cyan-600 to-emerald-700 text-white border-4 border-cyan-400 shadow-[0_0_35px_rgba(0,229,255,0.4)]'
+                                : 'bg-gradient-to-br from-red-600 to-red-800 text-white border-4 border-red-400 hover:shadow-[0_0_35px_rgba(239,68,68,0.6)]'
+                            }`}
+                    >
+                        {isRescueEnRoute ? (
+                            <>
+                                <Truck className="w-12 h-12 mb-1 text-white animate-pulse" />
+                                <span className="font-bold text-base tracking-wider">RESCUE EN ROUTE</span>
+                                <span className="text-[0.6rem] opacity-90 uppercase">HELP ON WAY</span>
+                            </>
+                        ) : (
+                            <>
+                                <ShieldAlert className="w-12 h-12 mb-1" />
+                                <span className="font-bold text-lg tracking-widest">
+                                    {isCritical ? 'SOS ACTIVE' : 'SOS'}
+                                </span>
+                                <span className="text-[0.6rem] opacity-80 uppercase tracking-tight">
+                                    {isCritical ? 'TAP TO CANCEL' : 'EMERGENCY HELP'}
+                                </span>
+                            </>
+                        )}
+                    </button>
+
+                    <p className="text-[0.68rem] text-[var(--text-muted)] mt-3 text-center">
+                        {isRescueEnRoute
+                            ? "Rescue operators dispatched to your coordinates. Maintain position."
+                            : "Instant priority distress relay to Surface Incident Command with full sensor telemetry."
+                        }
+                    </p>
+                </div>
+
+                {/* Risk Score & Status Dial */}
+                <div className="p-4 rounded-lg bg-[var(--bg-panel)] border border-[var(--grid-line)] flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <AnalogRiskGauge
+                        score={isRescueEnRoute ? 35 : risk.score}
+                        size={150}
+                        label="AI RISK LEVEL"
+                    />
+
+                    <div className="flex-1 w-full space-y-2 border-t sm:border-t-0 sm:border-l border-[var(--grid-line)] pt-3 sm:pt-0 sm:pl-4">
+                        <div className="flex items-center justify-between">
+                            <span className="text-[0.68rem] text-[var(--text-muted)]">STATUS ASSESSMENT</span>
+                            <span
+                                className={`text-[0.68rem] font-bold px-2 py-0.5 rounded uppercase ${isRescueEnRoute
+                                    ? 'bg-[rgba(0,229,255,0.2)] text-[var(--safety-cyan)] border border-[var(--safety-cyan)]'
+                                    : isCritical
+                                        ? 'bg-[var(--safety-red)] text-white'
+                                        : workerData.status === 'WARNING'
+                                            ? 'bg-[var(--safety-amber)] text-black'
+                                            : 'bg-[rgba(16,185,129,0.2)] text-[var(--safety-green)]'
+                                    }`}
+                            >
+                                {isRescueEnRoute ? '🚑 RESCUE EN ROUTE' : workerData.status}
+                            </span>
+                        </div>
+
+                        <div className="text-[0.72rem] text-[var(--text-secondary)] leading-snug">
+                            💡 <strong>Recommendation</strong>: {isRescueEnRoute ? "Rescue squad dispatched. Stand by at coordinates." : risk.recommendation}
+                        </div>
+
+                        <div className="pt-2 border-t border-[var(--grid-line)] flex items-center justify-between text-[0.68rem] text-[var(--text-muted)]">
+                            <span>ZONE: <strong className="text-[var(--text-primary)]">{workerData.zone}</strong></span>
+                            <span>GPS: <strong className="text-[var(--safety-cyan)] font-mono">{workerData.lat.toFixed(4)}°N, {Math.abs(workerData.lng).toFixed(4)}°W</strong></span>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Primary Real-Time Sensor Telemetry Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    <div className="p-3 rounded bg-[var(--bg-panel)] border border-[var(--grid-line)]">
+                        <div className="flex items-center justify-between text-[var(--text-muted)] text-[0.65rem]">
+                            <span>TEMPERATURE</span>
+                            <Thermometer className="w-3.5 h-3.5 text-[var(--safety-orange)]" />
+                        </div>
+                        <div className="text-xl font-bold text-[var(--text-primary)] mt-1">
+                            {workerData.envTemp}°C
+                        </div>
+                        <div className="text-[0.6rem] text-[var(--safety-green)] mt-0.5">Nominal Range</div>
+                    </div>
+
+                    <div className="p-3 rounded bg-[var(--bg-panel)] border border-[var(--grid-line)]">
+                        <div className="flex items-center justify-between text-[var(--text-muted)] text-[0.65rem]">
+                            <span>GAS / AIR QUALITY</span>
+                            <Wind className="w-3.5 h-3.5 text-[var(--safety-cyan)]" />
+                        </div>
+                        <div className="text-xl font-bold text-[var(--text-primary)] mt-1">
+                            {workerData.gasPpm} <span className="text-xs font-normal text-[var(--text-muted)]">PPM</span>
+                        </div>
+                        <div className="text-[0.6rem] text-[var(--safety-green)] mt-0.5">{workerData.airQuality}</div>
+                    </div>
+
+                    <div className="p-3 rounded bg-[var(--bg-panel)] border border-[var(--grid-line)]">
+                        <div className="flex items-center justify-between text-[var(--text-muted)] text-[0.65rem]">
+                            <span>HEART RATE</span>
+                            <Heart className="w-3.5 h-3.5 text-[var(--safety-red)]" />
+                        </div>
+                        <div className="text-xl font-bold text-[var(--text-primary)] mt-1">
+                            {workerData.heartRate} <span className="text-xs font-normal text-[var(--text-muted)]">BPM</span>
+                        </div>
+                        <div className="text-[0.6rem] text-[var(--text-muted)] mt-0.5">Cardiac Telemetry</div>
+                    </div>
+
+                    <div className="p-3 rounded bg-[var(--bg-panel)] border border-[var(--grid-line)]">
+                        <div className="flex items-center justify-between text-[var(--text-muted)] text-[0.65rem]">
+                            <span>TRANSPONDER</span>
+                            <Battery className="w-3.5 h-3.5 text-[var(--safety-green)]" />
+                        </div>
+                        <div className="text-xl font-bold text-[var(--text-primary)] mt-1">
+                            {workerData.battery}%
+                        </div>
+                        <div className="text-[0.6rem] text-[var(--safety-green)] mt-0.5">{workerData.connectivity} Mesh</div>
+                    </div>
+                </div>
+
+                {/* Shift Tasks Checklist */}
+                <div className="p-4 rounded-lg bg-[var(--bg-panel)] border border-[var(--grid-line)] space-y-2.5">
+                    <div className="flex items-center justify-between border-b border-[var(--grid-line)] pb-2">
+                        <span className="text-xs font-bold text-[var(--text-primary)] uppercase tracking-wider flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-[var(--safety-cyan)]" />
+                            ASSIGNED SHIFT SAFETY TASKS
+                        </span>
+                        <span className="text-[0.65rem] text-[var(--text-muted)]">
+                            {tasks.filter(t => t.completed).length} / {tasks.length} COMPLETED
+                        </span>
+                    </div>
+
+                    <div className="space-y-1.5">
+                        {tasks.map(task => (
+                            <div
+                                key={task.id}
+                                onClick={() => toggleTask(task.id)}
+                                className={`p-2.5 rounded border flex items-center gap-2.5 cursor-pointer transition-colors ${task.completed
+                                    ? 'bg-[rgba(16,185,129,0.08)] border-[rgba(16,185,129,0.3)] text-[var(--text-muted)] line-through'
+                                    : 'bg-[var(--bg-panel-elevated)] border-[var(--grid-line)] text-[var(--text-primary)] hover:border-[var(--safety-cyan)]'
+                                    }`}
+                            >
+                                <div className={`w-4 h-4 rounded border flex items-center justify-center ${task.completed ? 'bg-[var(--safety-green)] border-[var(--safety-green)] text-black' : 'border-[var(--text-muted)]'}`}>
+                                    {task.completed && <CheckCircle2 className="w-3 h-3" />}
+                                </div>
+                                <span className="text-[0.72rem]">{task.text}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Emergency Escape Corridor Pointer */}
+                <div className="p-3 rounded-lg bg-[rgba(0,229,255,0.06)] border border-[var(--safety-cyan)] flex items-center justify-between">
+                    <div>
+                        <div className="text-[0.65rem] text-[var(--safety-cyan)] font-bold uppercase tracking-wider">
+                            NEAREST MUSTER / ESCAPE CORRIDOR
+                        </div>
+                        <div className="text-xs font-bold text-[var(--text-primary)] mt-0.5">
+                            Primary Surface Shaft Gate Alpha (140m East)
+                        </div>
+                    </div>
+                    <div className="px-2 py-1 rounded bg-[rgba(16,185,129,0.2)] text-[var(--safety-green)] text-[0.65rem] font-bold">
+                        OPEN ✓
+                    </div>
+                </div>
+            </main>
+
+            {/* Rescue Force Notification Modal Popup */}
+            {showRescueModal && rescueDispatchInfo && (
+                <RescueDispatchedNotificationModal
+                    dispatchData={rescueDispatchInfo}
+                    onClose={() => setShowRescueModal(false)}
+                />
+            )}
         </div>
     );
 };

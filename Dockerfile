@@ -8,5 +8,6 @@ RUN npm install
 COPY server/ .
 
 EXPOSE 8080
+ENV PORT=8080
 
-CMD ["node", "server/index.js"]
+CMD ["node", "server.js"]
