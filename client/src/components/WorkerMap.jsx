@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, Polygon } from 'react-leaflet';
+import React, { useState, useEffect } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, Polygon, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L, { divIcon } from 'leaflet';
 import { calculateEvacuationRoute, SAFE_EXITS } from '../services/evacuationRouter';
-import { Shield, AlertTriangle, UserCheck, Flame, Navigation, Crosshair, Truck } from 'lucide-react';
+import { Shield, AlertTriangle, UserCheck, Flame, Navigation, Crosshair, Truck, MapPin, Locate } from 'lucide-react';
 import { soundService } from '../services/soundService';
 
 // Custom Tactical SVG Marker Generator
@@ -50,39 +50,68 @@ const createTacticalMarker = (type, status = 'SAFE', label = '') => {
     });
 };
 
-// Free, Zero-API-Key Basemap Tile Providers (Esri & OSM)
+// Smooth Map Controller for Panning & Centering
+const MapController = ({ center, zoom }) => {
+    const map = useMap();
+    useEffect(() => {
+        if (center && Array.isArray(center) && center.length === 2) {
+            map.flyTo(center, zoom || map.getZoom(), { duration: 1.2 });
+        }
+    }, [center, zoom, map]);
+    return null;
+};
+
+// Real-World Basemap Tile Providers (Google Maps, OSM, Esri - Zero API key required)
 const BASEMAP_PRESETS = {
-    dark: {
-        name: 'Tactical Dark',
-        icon: '🌑',
-        base: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
-        reference: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
-        maxZoom: 16,
-        attribution: '&copy; Esri, HERE, Garmin, OpenStreetMap'
+    google_hybrid: {
+        name: '🛰️ Google Hybrid (Satellite + Roads)',
+        base: 'https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+        subdomains: ['0', '1', '2', '3'],
+        maxZoom: 20,
+        attribution: '&copy; Google Maps'
     },
-    satellite: {
-        name: 'Satellite Recon',
-        icon: '🛰️',
-        base: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        reference: null,
-        maxZoom: 18,
-        attribution: '&copy; Esri, Maxar, Earthstar Geographics'
+    google_streets: {
+        name: '🗺️ Google Streets (Real Roadmap)',
+        base: 'https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+        subdomains: ['0', '1', '2', '3'],
+        maxZoom: 20,
+        attribution: '&copy; Google Maps'
+    },
+    google_sat: {
+        name: '📷 Google Satellite',
+        base: 'https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+        subdomains: ['0', '1', '2', '3'],
+        maxZoom: 20,
+        attribution: '&copy; Google Maps'
+    },
+    google_terrain: {
+        name: '🏔️ Google Terrain',
+        base: 'https://mt{s}.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',
+        subdomains: ['0', '1', '2', '3'],
+        maxZoom: 20,
+        attribution: '&copy; Google Maps'
     },
     osm: {
-        name: 'OSM Standard',
-        icon: '🗺️',
-        base: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-        reference: null,
+        name: '🌍 OpenStreetMap Standard',
+        base: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        subdomains: ['a', 'b', 'c'],
         maxZoom: 19,
         attribution: '&copy; OpenStreetMap contributors'
     },
-    topo: {
-        name: 'Topographic',
-        icon: '🏔️',
-        base: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
-        reference: null,
-        maxZoom: 18,
-        attribution: '&copy; Esri, DeLorme, NAVTEQ'
+    esri_sat: {
+        name: '🛰️ Esri World Imagery',
+        base: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        subdomains: [],
+        maxZoom: 19,
+        attribution: '&copy; Esri, Maxar, Earthstar Geographics'
+    },
+    dark: {
+        name: '🌑 Tactical Dark Canvas',
+        base: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+        reference: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
+        subdomains: [],
+        maxZoom: 16,
+        attribution: '&copy; Esri, HERE, Garmin'
     }
 };
 
@@ -95,14 +124,27 @@ export const WorkerMap = ({
     onSelectWorker = () => { },
     onOpenDigitalTwin = () => { }
 }) => {
-    const center = [51.505, -0.09]; // Industrial site center
+    const defaultCenter = [51.505, -0.09]; // Industrial site center
 
-    const [selectedBasemap, setSelectedBasemap] = useState('dark');
+    const [selectedBasemap, setSelectedBasemap] = useState('google_hybrid');
+    const [currentCenter, setCurrentCenter] = useState(defaultCenter);
+    const [currentZoom, setCurrentZoom] = useState(15);
+    const [isLocating, setIsLocating] = useState(false);
+    const [userGpsPos, setUserGpsPos] = useState(null);
+
     const [showHazards, setShowHazards] = useState(true);
     const [showGeofences, setShowGeofences] = useState(true);
     const [showRoutes, setShowRoutes] = useState(true);
     const [showTeams, setShowTeams] = useState(true);
     const [showExits, setShowExits] = useState(true);
+
+    // If selected worker changes, pan map to worker
+    useEffect(() => {
+        if (selectedWorker && selectedWorker.lat && selectedWorker.lng) {
+            setCurrentCenter([selectedWorker.lat, selectedWorker.lng]);
+            setCurrentZoom(16);
+        }
+    }, [selectedWorker]);
 
     // Active worker for routing priority: selected or critical SOS worker or rescue in progress
     const activeWorkerForRoute = selectedWorker || workers.find(w => w.status === 'CRITICAL' || w.status === 'RESCUE_EN_ROUTE') || workers[0];
@@ -110,7 +152,29 @@ export const WorkerMap = ({
         ? calculateEvacuationRoute([activeWorkerForRoute.lat || 51.505, activeWorkerForRoute.lng || -0.09], hazards)
         : null;
 
-    const currentBasemap = BASEMAP_PRESETS[selectedBasemap] || BASEMAP_PRESETS.dark;
+    const currentBasemap = BASEMAP_PRESETS[selectedBasemap] || BASEMAP_PRESETS.google_hybrid;
+
+    // Trigger browser GPS location
+    const handleLocateMe = () => {
+        soundService.playClick();
+        if ('geolocation' in navigator) {
+            setIsLocating(true);
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    const coords = [pos.coords.latitude, pos.coords.longitude];
+                    setUserGpsPos(coords);
+                    setCurrentCenter(coords);
+                    setCurrentZoom(16);
+                    setIsLocating(false);
+                },
+                (err) => {
+                    console.warn('Geolocation error:', err);
+                    setIsLocating(false);
+                },
+                { enableHighAccuracy: true, timeout: 10000 }
+            );
+        }
+    };
 
     return (
         <div className="h-full w-full rounded-md overflow-hidden bezel-panel border border-[var(--grid-line)] relative flex flex-col min-h-[400px]">
@@ -119,7 +183,7 @@ export const WorkerMap = ({
                 <div className="flex items-center gap-2 text-[var(--text-primary)]">
                     <span className="w-2 h-2 rounded-full bg-[var(--safety-cyan)] animate-pulse"></span>
                     <span className="font-bold tracking-wider uppercase text-[var(--safety-cyan)]">
-                        TACTICAL SAFETY RADAR // GIS
+                        REAL-TIME GIS RADAR // LIVE MAP
                     </span>
                     <span className="text-[var(--text-muted)] text-[0.62rem] hidden sm:inline">
                         (MUMBAI HIGH / SHAFT 3)
@@ -127,24 +191,38 @@ export const WorkerMap = ({
                 </div>
 
                 {/* Basemap Preset Selector & Layer Toggles */}
-                <div className="flex items-center flex-wrap gap-3">
-                    {/* Basemap Switcher (Zero API key) */}
-                    <div className="flex items-center gap-1 bg-black/40 border border-[var(--grid-line)] rounded px-1.5 py-0.5">
-                        <span className="text-[var(--text-muted)] text-[0.6rem]">MAP:</span>
+                <div className="flex items-center flex-wrap gap-2.5">
+                    {/* Basemap Switcher (Real Google & OSM Maps) */}
+                    <div className="flex items-center gap-1 bg-black/50 border border-[var(--grid-line)] rounded px-2 py-0.5 shadow-inner">
+                        <span className="text-[var(--text-muted)] text-[0.6rem] font-bold">MAP:</span>
                         <select
                             value={selectedBasemap}
                             onChange={(e) => {
                                 soundService.playClick();
                                 setSelectedBasemap(e.target.value);
                             }}
-                            className="bg-transparent text-[var(--safety-cyan)] font-mono text-[0.65rem] border-none outline-none cursor-pointer pr-1"
+                            className="bg-transparent text-[var(--safety-cyan)] font-mono text-[0.65rem] border-none outline-none cursor-pointer font-semibold"
                         >
-                            <option value="dark" className="bg-[#0E1626] text-white">🌑 Tactical Dark</option>
-                            <option value="satellite" className="bg-[#0E1626] text-white">🛰️ Satellite Recon</option>
-                            <option value="osm" className="bg-[#0E1626] text-white">🗺️ OSM Standard</option>
-                            <option value="topo" className="bg-[#0E1626] text-white">🏔️ Topographic</option>
+                            <option value="google_hybrid" className="bg-[#0E1626] text-white">🛰️ Google Hybrid (Satellite + Roads)</option>
+                            <option value="google_streets" className="bg-[#0E1626] text-white">🗺️ Google Streets (Real Roadmap)</option>
+                            <option value="google_sat" className="bg-[#0E1626] text-white">📷 Google Satellite Pure</option>
+                            <option value="google_terrain" className="bg-[#0E1626] text-white">🏔️ Google Terrain</option>
+                            <option value="osm" className="bg-[#0E1626] text-white">🌍 OpenStreetMap Standard</option>
+                            <option value="esri_sat" className="bg-[#0E1626] text-white">🛰️ Esri World Imagery</option>
+                            <option value="dark" className="bg-[#0E1626] text-white">🌑 Tactical Dark Canvas</option>
                         </select>
                     </div>
+
+                    {/* GPS Locate Me Button */}
+                    <button
+                        onClick={handleLocateMe}
+                        disabled={isLocating}
+                        title="Center on my real GPS coordinates"
+                        className="flex items-center gap-1 px-2 py-0.5 rounded bg-[rgba(0,229,255,0.15)] border border-[var(--safety-cyan)] text-[var(--safety-cyan)] hover:bg-[rgba(0,229,255,0.3)] transition-all cursor-pointer text-[0.65rem] font-bold"
+                    >
+                        <Locate className={`w-3 h-3 ${isLocating ? 'animate-spin' : ''}`} />
+                        <span>{isLocating ? 'Locating...' : 'GPS Me'}</span>
+                    </button>
 
                     <label className="flex items-center gap-1.5 cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
                         <input
@@ -213,17 +291,20 @@ export const WorkerMap = ({
             {/* Main Interactive Leaflet Map */}
             <div className="flex-1 w-full relative">
                 <MapContainer
-                    center={center}
+                    center={defaultCenter}
                     zoom={15}
                     className="h-full w-full"
                     zoomControl={false}
                 >
-                    {/* Zero-API-Key Base Tile Layer */}
+                    <MapController center={currentCenter} zoom={currentZoom} />
+
+                    {/* Real-World Base Tile Layer */}
                     <TileLayer
                         key={selectedBasemap}
                         attribution={currentBasemap.attribution}
                         url={currentBasemap.base}
-                        maxZoom={currentBasemap.maxZoom}
+                        subdomains={currentBasemap.subdomains || ['0', '1', '2', '3']}
+                        maxZoom={currentBasemap.maxZoom || 19}
                     />
 
                     {/* Optional Reference/Labels Layer (for Dark Canvas) */}
@@ -234,6 +315,23 @@ export const WorkerMap = ({
                             maxZoom={currentBasemap.maxZoom}
                             opacity={0.9}
                         />
+                    )}
+
+                    {/* User GPS Live Marker (if located) */}
+                    {userGpsPos && (
+                        <Marker
+                            position={userGpsPos}
+                            icon={createTacticalMarker('RESCUE', 'RESCUE_EN_ROUTE', 'YOU')}
+                        >
+                            <Popup>
+                                <div className="font-data text-xs p-1">
+                                    <div className="font-bold text-[var(--safety-cyan)]">📍 Your Real GPS Location</div>
+                                    <div className="text-[0.65rem] text-[var(--text-muted)] mt-0.5">
+                                        Lat: {userGpsPos[0].toFixed(5)}, Lng: {userGpsPos[1].toFixed(5)}
+                                    </div>
+                                </div>
+                            </Popup>
+                        </Marker>
                     )}
 
                     {/* Geofence Zones */}
