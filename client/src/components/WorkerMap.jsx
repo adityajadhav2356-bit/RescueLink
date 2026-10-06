@@ -50,6 +50,42 @@ const createTacticalMarker = (type, status = 'SAFE', label = '') => {
     });
 };
 
+// Free, Zero-API-Key Basemap Tile Providers (Esri & OSM)
+const BASEMAP_PRESETS = {
+    dark: {
+        name: 'Tactical Dark',
+        icon: '🌑',
+        base: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+        reference: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
+        maxZoom: 16,
+        attribution: '&copy; Esri, HERE, Garmin, OpenStreetMap'
+    },
+    satellite: {
+        name: 'Satellite Recon',
+        icon: '🛰️',
+        base: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        reference: null,
+        maxZoom: 18,
+        attribution: '&copy; Esri, Maxar, Earthstar Geographics'
+    },
+    osm: {
+        name: 'OSM Standard',
+        icon: '🗺️',
+        base: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+        reference: null,
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors'
+    },
+    topo: {
+        name: 'Topographic',
+        icon: '🏔️',
+        base: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+        reference: null,
+        maxZoom: 18,
+        attribution: '&copy; Esri, DeLorme, NAVTEQ'
+    }
+};
+
 export const WorkerMap = ({
     workers = [],
     hazards = [],
@@ -61,6 +97,7 @@ export const WorkerMap = ({
 }) => {
     const center = [51.505, -0.09]; // Industrial site center
 
+    const [selectedBasemap, setSelectedBasemap] = useState('dark');
     const [showHazards, setShowHazards] = useState(true);
     const [showGeofences, setShowGeofences] = useState(true);
     const [showRoutes, setShowRoutes] = useState(true);
@@ -72,6 +109,8 @@ export const WorkerMap = ({
     const evacuationRoute = (showRoutes && activeWorkerForRoute)
         ? calculateEvacuationRoute([activeWorkerForRoute.lat || 51.505, activeWorkerForRoute.lng || -0.09], hazards)
         : null;
+
+    const currentBasemap = BASEMAP_PRESETS[selectedBasemap] || BASEMAP_PRESETS.dark;
 
     return (
         <div className="h-full w-full rounded-md overflow-hidden bezel-panel border border-[var(--grid-line)] relative flex flex-col min-h-[400px]">
@@ -87,8 +126,26 @@ export const WorkerMap = ({
                     </span>
                 </div>
 
-                {/* Layer Toggles */}
-                <div className="flex items-center gap-3">
+                {/* Basemap Preset Selector & Layer Toggles */}
+                <div className="flex items-center flex-wrap gap-3">
+                    {/* Basemap Switcher (Zero API key) */}
+                    <div className="flex items-center gap-1 bg-black/40 border border-[var(--grid-line)] rounded px-1.5 py-0.5">
+                        <span className="text-[var(--text-muted)] text-[0.6rem]">MAP:</span>
+                        <select
+                            value={selectedBasemap}
+                            onChange={(e) => {
+                                soundService.playClick();
+                                setSelectedBasemap(e.target.value);
+                            }}
+                            className="bg-transparent text-[var(--safety-cyan)] font-mono text-[0.65rem] border-none outline-none cursor-pointer pr-1"
+                        >
+                            <option value="dark" className="bg-[#0E1626] text-white">🌑 Tactical Dark</option>
+                            <option value="satellite" className="bg-[#0E1626] text-white">🛰️ Satellite Recon</option>
+                            <option value="osm" className="bg-[#0E1626] text-white">🗺️ OSM Standard</option>
+                            <option value="topo" className="bg-[#0E1626] text-white">🏔️ Topographic</option>
+                        </select>
+                    </div>
+
                     <label className="flex items-center gap-1.5 cursor-pointer text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
                         <input
                             type="checkbox"
@@ -161,11 +218,23 @@ export const WorkerMap = ({
                     className="h-full w-full"
                     zoomControl={false}
                 >
-                    {/* CartoDB Dark Matter Tile Layer */}
+                    {/* Zero-API-Key Base Tile Layer */}
                     <TileLayer
-                        attribution='&copy; <a href="https://carto.com/">CARTO</a>'
-                        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                        key={selectedBasemap}
+                        attribution={currentBasemap.attribution}
+                        url={currentBasemap.base}
+                        maxZoom={currentBasemap.maxZoom}
                     />
+
+                    {/* Optional Reference/Labels Layer (for Dark Canvas) */}
+                    {currentBasemap.reference && (
+                        <TileLayer
+                            key={`${selectedBasemap}-ref`}
+                            url={currentBasemap.reference}
+                            maxZoom={currentBasemap.maxZoom}
+                            opacity={0.9}
+                        />
+                    )}
 
                     {/* Geofence Zones */}
                     {showGeofences && geofences.map((gf) => {
