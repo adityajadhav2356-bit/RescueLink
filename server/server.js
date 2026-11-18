@@ -3,9 +3,10 @@ require("dotenv").config();
 const express = require("express");
 const http = require("http");
 const cors = require("cors");
-const mongoose = require("mongoose");
 const { Server } = require("socket.io");
+const mongoose = require("mongoose");
 
+// Models
 const Worker = require("./models/Worker");
 const Alert = require("./models/Alert");
 
@@ -17,20 +18,57 @@ const server = http.createServer(app);
 ========================================================= */
 
 const PORT = process.env.PORT || 5000;
-const MONGO_URI = process.env.MONGO_URI;
-const CLIENT_URL =
-  process.env.CLIENT_URL || "http://localhost:5173";
+
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://10.65.210.25:5173",
+  "https://rescue-link-8zum.vercel.app",
+].filter(Boolean);
+
+console.log("==========================================");
+console.log("        RESCUELINK BACKEND STARTING");
+console.log("==========================================");
 
 /* =========================================================
-   MIDDLEWARE
+   CORS
 ========================================================= */
 
-app.use(
-  cors({
-    origin: true,
-    credentials: true,
-  })
-);
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests without an Origin header
+    // such as Postman/server-to-server requests
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    console.log("CORS blocked origin:", origin);
+    return callback(new Error("Not allowed by CORS"));
+  },
+
+  credentials: true,
+
+  methods: [
+    "GET",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "OPTIONS",
+  ],
+
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+  ],
+};
+
+app.use(cors(corsOptions));
+
+app.options("*", cors(corsOptions));
 
 app.use(express.json());
 
@@ -40,24 +78,42 @@ app.use(express.json());
 
 const io = new Server(server, {
   cors: {
-    origin: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+    origin: function (origin, callback) {
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      console.log("Socket CORS blocked origin:", origin);
+      return callback(new Error("Not allowed by Socket.IO CORS"));
+    },
+
     credentials: true,
+
+    methods: [
+      "GET",
+      "POST",
+    ],
   },
 
-  transports: ["polling", "websocket"],
+  transports: ["websocket", "polling"],
+
+  pingTimeout: 60000,
+  pingInterval: 25000,
 });
 
 /* =========================================================
-   MONGODB
+   MONGODB CONNECTION
 ========================================================= */
 
 mongoose
-  .connect(MONGO_URI)
+  .connect(process.env.MONGO_URI)
   .then(async () => {
-    console.log("=================================");
+    console.log("MongoDB connection established");
     console.log("MongoDB connected successfully");
-    console.log("=================================");
 
     await seedWorkers();
   })
@@ -65,18 +121,6 @@ mongoose
     console.error("MongoDB connection failed:");
     console.error(error.message);
   });
-
-mongoose.connection.on("connected", () => {
-  console.log("MongoDB connection established");
-});
-
-mongoose.connection.on("error", (error) => {
-  console.error("MongoDB error:", error.message);
-});
-
-mongoose.connection.on("disconnected", () => {
-  console.log("MongoDB disconnected");
-});
 
 /* =========================================================
    SEED WORKERS
@@ -87,17 +131,17 @@ async function seedWorkers() {
     const count = await Worker.countDocuments();
 
     if (count === 0) {
-      await Worker.insertMany([
+      const workers = [
         {
           workerId: "W-042",
           name: "Alex Mercer",
           location: "Sector 7G",
           status: "SAFE",
-          envTemp: 31,
+          environment: {
+            temperature: 31,
+          },
           battery: 84,
           connectivity: "Strong",
-          lat: 18.5204,
-          lng: 73.8567,
         },
 
         {
@@ -105,11 +149,11 @@ async function seedWorkers() {
           name: "Sarah Connor",
           location: "Tunnel B",
           status: "WARNING",
-          envTemp: 38,
+          environment: {
+            temperature: 38,
+          },
           battery: 45,
           connectivity: "Strong",
-          lat: 18.526,
-          lng: 73.851,
         },
 
         {
@@ -117,21 +161,20 @@ async function seedWorkers() {
           name: "James Bond",
           location: "Deep Shaft 3",
           status: "SAFE",
-          envTemp: 28,
+          environment: {
+            temperature: 28,
+          },
           battery: 90,
           connectivity: "Strong",
-          lat: 18.515,
-          lng: 73.862,
         },
-      ]);
+      ];
 
-      console.log("3 demo worker records inserted.");
+      await Worker.insertMany(workers);
+
+      console.log("Seeded 3 workers into MongoDB");
     }
   } catch (error) {
-    console.error(
-      "Worker seed error:",
-      error.message
-    );
+    console.error("Worker seeding failed:", error.message);
   }
 }
 
@@ -140,952 +183,14 @@ async function seedWorkers() {
 ========================================================= */
 
 app.get("/api/health", (req, res) => {
-  res.json({
+  res.status(200).json({
     status: "OK",
     database:
       mongoose.connection.readyState === 1
         ? "connected"
         : "disconnected",
-    serverTime:
-      new Date().toISOString(),
+    serverTime: new Date().toISOString(),
   });
-});
-
-/* =========================================================
-   WORKERS
-========================================================= */
-
-/*
-GET /api/workers
-*/
-app.get("/api/workers", async (req, res) => {
-  try {
-    const workers =
-      await Worker.find().sort({
-        createdAt: -1,
-      });
-
-    res.json(workers);
-  } catch (error) {
-    console.error(
-      "Get workers error:",
-      error.message
-    );
-
-    res.status(500).json({
-      message:
-        "Failed to fetch workers",
-    });
-  }
-});
-
-/*
-GET /api/workers/:workerId
-*/
-app.get(
-  "/api/workers/:workerId",
-  async (req, res) => {
-    try {
-      const worker =
-        await Worker.findOne({
-          workerId:
-            req.params.workerId,
-        });
-
-      if (!worker) {
-        return res.status(404).json({
-          message:
-            "Worker not found",
-        });
-      }
-
-      res.json(worker);
-    } catch (error) {
-      console.error(
-        "Get worker error:",
-        error.message
-      );
-
-      res.status(500).json({
-        message:
-          "Failed to fetch worker",
-      });
-    }
-  }
-);
-
-/*
-POST /api/workers
-*/
-app.post("/api/workers", async (req, res) => {
-  try {
-    const worker =
-      await Worker.create(req.body);
-
-    io.emit(
-      "worker_updated",
-      worker
-    );
-
-    res.status(201).json(worker);
-  } catch (error) {
-    console.error(
-      "Create worker error:",
-      error.message
-    );
-
-    res.status(500).json({
-      message:
-        "Failed to create worker",
-      error:
-        error.message,
-    });
-  }
-});
-
-/*
-PUT /api/workers/:workerId
-*/
-app.put(
-  "/api/workers/:workerId",
-  async (req, res) => {
-    try {
-      const worker =
-        await Worker.findOneAndUpdate(
-          {
-            workerId:
-              req.params.workerId,
-          },
-          req.body,
-          {
-            new: true,
-            runValidators: true,
-          }
-        );
-
-      if (!worker) {
-        return res.status(404).json({
-          message:
-            "Worker not found",
-        });
-      }
-
-      io.emit(
-        "worker_updated",
-        worker
-      );
-
-      res.json(worker);
-    } catch (error) {
-      console.error(
-        "Update worker error:",
-        error.message
-      );
-
-      res.status(500).json({
-        message:
-          "Failed to update worker",
-        error:
-          error.message,
-      });
-    }
-  }
-);
-
-/*
-DELETE /api/workers/:workerId
-*/
-app.delete(
-  "/api/workers/:workerId",
-  async (req, res) => {
-    try {
-      const worker =
-        await Worker.findOneAndDelete({
-          workerId:
-            req.params.workerId,
-        });
-
-      if (!worker) {
-        return res.status(404).json({
-          message:
-            "Worker not found",
-        });
-      }
-
-      io.emit(
-        "worker_deleted",
-        {
-          workerId:
-            req.params.workerId,
-        }
-      );
-
-      res.json({
-        message:
-          "Worker deleted successfully",
-      });
-    } catch (error) {
-      console.error(
-        "Delete worker error:",
-        error.message
-      );
-
-      res.status(500).json({
-        message:
-          "Failed to delete worker",
-      });
-    }
-  }
-);
-
-/* =========================================================
-   ALERTS
-========================================================= */
-
-/*
-GET active alerts
-*/
-app.get("/api/alerts", async (req, res) => {
-  try {
-    const alerts =
-      await Alert.find({
-        status: {
-          $ne: "RESOLVED",
-        },
-      }).sort({
-        createdAt: -1,
-      });
-
-    res.json(alerts);
-  } catch (error) {
-    console.error(
-      "Get alerts error:",
-      error.message
-    );
-
-    res.status(500).json({
-      message:
-        "Failed to fetch alerts",
-    });
-  }
-});
-
-/*
-GET all alerts
-*/
-app.get(
-  "/api/alerts/all",
-  async (req, res) => {
-    try {
-      const alerts =
-        await Alert.find().sort({
-          createdAt: -1,
-        });
-
-      res.json(alerts);
-    } catch (error) {
-      console.error(
-        "Get all alerts error:",
-        error.message
-      );
-
-      res.status(500).json({
-        message:
-          "Failed to fetch alerts",
-      });
-    }
-  }
-);
-
-/*
-GET single alert
-*/
-app.get(
-  "/api/alerts/:id",
-  async (req, res) => {
-    try {
-      const alert =
-        await Alert.findById(
-          req.params.id
-        );
-
-      if (!alert) {
-        return res.status(404).json({
-          message:
-            "Alert not found",
-        });
-      }
-
-      res.json(alert);
-    } catch (error) {
-      console.error(
-        "Get alert error:",
-        error.message
-      );
-
-      res.status(500).json({
-        message:
-          "Failed to fetch alert",
-      });
-    }
-  }
-);
-
-/*
-POST alert
-*/
-app.post("/api/alerts", async (req, res) => {
-  try {
-    const alert =
-      await Alert.create(req.body);
-
-    if (alert.workerId) {
-      await Worker.findOneAndUpdate(
-        {
-          workerId:
-            alert.workerId,
-        },
-        {
-          status:
-            alert.severity ===
-              "CRITICAL"
-              ? "CRITICAL"
-              : "WARNING",
-        }
-      );
-    }
-
-    io.emit(
-      "emergency_alert_received",
-      alert
-    );
-
-    res.status(201).json(alert);
-  } catch (error) {
-    console.error(
-      "Create alert error:",
-      error.message
-    );
-
-    res.status(500).json({
-      message:
-        "Failed to create alert",
-      error:
-        error.message,
-    });
-  }
-});
-
-/*
-Resolve alert
-*/
-app.patch(
-  "/api/alerts/:id/resolve",
-  async (req, res) => {
-    try {
-      const alert =
-        await Alert.findByIdAndUpdate(
-          req.params.id,
-          {
-            status:
-              "RESOLVED",
-            resolvedAt:
-              new Date(),
-          },
-          {
-            new: true,
-          }
-        );
-
-      if (!alert) {
-        return res.status(404).json({
-          message:
-            "Alert not found",
-        });
-      }
-
-      if (alert.workerId) {
-        await Worker.findOneAndUpdate(
-          {
-            workerId:
-              alert.workerId,
-          },
-          {
-            status:
-              "SAFE",
-          }
-        );
-      }
-
-      io.emit(
-        "alert_resolved",
-        alert
-      );
-
-      res.json(alert);
-    } catch (error) {
-      console.error(
-        "Resolve alert error:",
-        error.message
-      );
-
-      res.status(500).json({
-        message:
-          "Failed to resolve alert",
-      });
-    }
-  }
-);
-
-/* =========================================================
-   SOCKET CONNECTION
-========================================================= */
-
-io.on("connection", (socket) => {
-  console.log(
-    `🟢 Socket connected: ${socket.id}`
-  );
-
-  /* -------------------------------------------------------
-     INITIAL DATA
-  ------------------------------------------------------- */
-
-  socket.on(
-    "request_initial_data",
-    async () => {
-      try {
-        const workers =
-          await Worker.find().sort({
-            createdAt: -1,
-          });
-
-        const alerts =
-          await Alert.find({
-            status: {
-              $ne: "RESOLVED",
-            },
-          }).sort({
-            createdAt: -1,
-          });
-
-        socket.emit(
-          "initial_data",
-          {
-            workers,
-            alerts,
-          }
-        );
-
-        console.log(
-          `📦 Initial data sent to ${socket.id}`
-        );
-      } catch (error) {
-        console.error(
-          "Initial data error:",
-          error.message
-        );
-      }
-    }
-  );
-
-  /* -------------------------------------------------------
-     WORKER UPDATE
-  ------------------------------------------------------- */
-
-  socket.on(
-    "worker_update",
-    async (data) => {
-      try {
-        const worker =
-          await Worker.findOneAndUpdate(
-            {
-              workerId:
-                data.workerId,
-            },
-            data,
-            {
-              new: true,
-            }
-          );
-
-        if (!worker) {
-          console.log(
-            "Worker not found:",
-            data.workerId
-          );
-          return;
-        }
-
-        io.emit(
-          "worker_updated",
-          worker
-        );
-
-        console.log(
-          `👤 Worker updated: ${worker.workerId}`
-        );
-      } catch (error) {
-        console.error(
-          "Worker update error:",
-          error.message
-        );
-      }
-    }
-  );
-
-  /* -------------------------------------------------------
-     LIVE GPS LOCATION
-  ------------------------------------------------------- */
-
-  socket.on(
-    "worker_location_update",
-    async (data) => {
-      try {
-        console.log(
-          "📍 Location received:",
-          data
-        );
-
-        const worker =
-          await Worker.findOneAndUpdate(
-            {
-              workerId:
-                data.workerId,
-            },
-            {
-              lat: Number(
-                data.lat
-              ),
-              lng: Number(
-                data.lng
-              ),
-              location:
-                data.location ||
-                undefined,
-              lastLocationUpdate:
-                new Date(),
-            },
-            {
-              new: true,
-            }
-          );
-
-        if (!worker) {
-          console.log(
-            "Worker not found:",
-            data.workerId
-          );
-          return;
-        }
-
-        io.emit(
-          "worker_location_updated",
-          {
-            workerId:
-              worker.workerId,
-
-            lat:
-              worker.lat,
-
-            lng:
-              worker.lng,
-
-            location:
-              worker.location,
-
-            accuracy:
-              data.accuracy,
-
-            timestamp:
-              data.timestamp ||
-              new Date().toISOString(),
-          }
-        );
-
-        console.log(
-          `📍 ${worker.workerId} → ${worker.lat}, ${worker.lng}`
-        );
-      } catch (error) {
-        console.error(
-          "Location update failed:",
-          error.message
-        );
-      }
-    }
-  );
-
-  /* -------------------------------------------------------
-     SOS / EMERGENCY
-  ------------------------------------------------------- */
-
-  socket.on(
-    "emergency_alert",
-    async (data) => {
-      try {
-        console.log(
-          "🚨 EMERGENCY ALERT:",
-          data
-        );
-
-        const alert =
-          await Alert.create({
-            workerId:
-              data.workerId,
-
-            message:
-              data.message ||
-              "Emergency SOS triggered",
-
-            severity:
-              "CRITICAL",
-
-            status:
-              "ACTIVE",
-
-            lat:
-              data.lat,
-
-            lng:
-              data.lng,
-
-            timestamp:
-              data.timestamp ||
-              new Date(),
-          });
-
-        await Worker.findOneAndUpdate(
-          {
-            workerId:
-              data.workerId,
-          },
-          {
-            status:
-              "CRITICAL",
-
-            lat:
-              data.lat,
-
-            lng:
-              data.lng,
-
-            lastLocationUpdate:
-              new Date(),
-          }
-        );
-
-        io.emit(
-          "emergency_alert_received",
-          {
-            id:
-              alert._id,
-
-            alertId:
-              alert._id,
-
-            workerId:
-              data.workerId,
-
-            message:
-              alert.message,
-
-            severity:
-              "CRITICAL",
-
-            status:
-              "ACTIVE",
-
-            lat:
-              data.lat,
-
-            lng:
-              data.lng,
-
-            timestamp:
-              alert.timestamp,
-          }
-        );
-
-        console.log(
-          `🚨 SOS broadcast for ${data.workerId}`
-        );
-      } catch (error) {
-        console.error(
-          "Emergency alert error:",
-          error.message
-        );
-      }
-    }
-  );
-
-  /* -------------------------------------------------------
-     DISPATCH RESCUE TEAM
-  ------------------------------------------------------- */
-
-  socket.on(
-    "dispatch_rescue_team",
-    async (data) => {
-      try {
-        console.log(
-          "🚑 RESCUE DISPATCH:",
-          data
-        );
-
-        let alert =
-          null;
-
-        if (
-          data.alertId
-        ) {
-          alert =
-            await Alert.findByIdAndUpdate(
-              data.alertId,
-              {
-                status:
-                  "RESCUE_DISPATCHED",
-
-                rescueTeam:
-                  data.rescueTeam ||
-                  "Rescue Team Alpha",
-
-                dispatchedAt:
-                  new Date(),
-              },
-              {
-                new: true,
-              }
-            );
-        }
-
-        io.emit(
-          "rescue_dispatched",
-          {
-            alertId:
-              data.alertId,
-
-            workerId:
-              data.workerId,
-
-            rescueTeam:
-              data.rescueTeam ||
-              "Rescue Team Alpha",
-
-            timestamp:
-              new Date().toISOString(),
-          }
-        );
-
-        console.log(
-          `🚑 Rescue dispatched for ${data.workerId}`
-        );
-      } catch (error) {
-        console.error(
-          "Rescue dispatch error:",
-          error.message
-        );
-      }
-    }
-  );
-
-  /* -------------------------------------------------------
-     RESOLVE ALERT
-  ------------------------------------------------------- */
-
-  socket.on(
-    "resolve_alert",
-    async (data) => {
-      try {
-        const alert =
-          await Alert.findByIdAndUpdate(
-            data.alertId,
-            {
-              status:
-                "RESOLVED",
-
-              resolvedAt:
-                new Date(),
-            },
-            {
-              new: true,
-            }
-          );
-
-        if (!alert) {
-          console.log(
-            "Alert not found:",
-            data.alertId
-          );
-          return;
-        }
-
-        if (
-          alert.workerId
-        ) {
-          await Worker.findOneAndUpdate(
-            {
-              workerId:
-                alert.workerId,
-            },
-            {
-              status:
-                "SAFE",
-            }
-          );
-        }
-
-        io.emit(
-          "alert_resolved",
-          {
-            alertId:
-              alert._id,
-
-            workerId:
-              alert.workerId,
-
-            status:
-              "RESOLVED",
-
-            timestamp:
-              new Date().toISOString(),
-          }
-        );
-
-        console.log(
-          `✅ Alert resolved: ${alert._id}`
-        );
-      } catch (error) {
-        console.error(
-          "Resolve socket alert error:",
-          error.message
-        );
-      }
-    }
-  );
-
-  /* -------------------------------------------------------
-     HAZARD BROADCAST
-  ------------------------------------------------------- */
-
-  socket.on(
-    "hazard_broadcast",
-    (data) => {
-      console.log(
-        "⚠️ Hazard broadcast:",
-        data
-      );
-
-      io.emit(
-        "hazard_created",
-        data
-      );
-    }
-  );
-
-  /* -------------------------------------------------------
-     HAZARD RESOLVE
-  ------------------------------------------------------- */
-
-  socket.on(
-    "hazard_resolve",
-    (data) => {
-      console.log(
-        "✅ Hazard resolved:",
-        data
-      );
-
-      io.emit(
-        "hazard_resolved",
-        data
-      );
-    }
-  );
-
-  /* -------------------------------------------------------
-     RESCUE TEAM UPDATE
-  ------------------------------------------------------- */
-
-  socket.on(
-    "rescue_team_update",
-    (data) => {
-      console.log(
-        "🚑 Rescue team update:",
-        data
-      );
-
-      io.emit(
-        "rescue_team_updated",
-        data
-      );
-    }
-  );
-
-  /* -------------------------------------------------------
-     OFFLINE EVENT SYNC
-  ------------------------------------------------------- */
-
-  socket.on(
-    "sync_offline_events",
-    async (events) => {
-      try {
-        if (
-          !Array.isArray(
-            events
-          )
-        ) {
-          return;
-        }
-
-        console.log(
-          `🔄 Syncing ${events.length} offline events`
-        );
-
-        for (
-          const event of events
-        ) {
-          if (
-            event.type ===
-            "LOCATION"
-          ) {
-            socket.emit(
-              "worker_location_update",
-              event.data
-            );
-          }
-
-          if (
-            event.type ===
-            "SOS"
-          ) {
-            socket.emit(
-              "emergency_alert",
-              event.data
-            );
-          }
-        }
-      } catch (error) {
-        console.error(
-          "Offline sync error:",
-          error.message
-        );
-      }
-    }
-  );
-
-  /* -------------------------------------------------------
-     DISCONNECT
-  ------------------------------------------------------- */
-
-  socket.on(
-    "disconnect",
-    (reason) => {
-      console.log(
-        `🔴 Socket disconnected: ${socket.id}`
-      );
-
-      console.log(
-        `Reason: ${reason}`
-      );
-    }
-  );
 });
 
 /* =========================================================
@@ -1094,17 +199,583 @@ io.on("connection", (socket) => {
 
 app.get("/", (req, res) => {
   res.json({
-    name:
-      "RescueLink Backend",
-    status:
-      "running",
-    port:
-      PORT,
-    database:
-      mongoose.connection.readyState ===
-      1
-        ? "connected"
-        : "disconnected",
+    service: "RescueLink Backend",
+    status: "running",
+    version: "1.0.0",
+  });
+});
+
+/* =========================================================
+   WORKER APIs
+========================================================= */
+
+// GET ALL WORKERS
+app.get("/api/workers", async (req, res) => {
+  try {
+    const workers = await Worker.find().sort({
+      createdAt: -1,
+    });
+
+    res.json(workers);
+  } catch (error) {
+    console.error("GET workers error:", error.message);
+
+    res.status(500).json({
+      message: "Failed to fetch workers",
+      error: error.message,
+    });
+  }
+});
+
+// GET SINGLE WORKER
+app.get("/api/workers/:workerId", async (req, res) => {
+  try {
+    const worker = await Worker.findOne({
+      workerId: req.params.workerId,
+    });
+
+    if (!worker) {
+      return res.status(404).json({
+        message: "Worker not found",
+      });
+    }
+
+    res.json(worker);
+  } catch (error) {
+    res.status(500).json({
+      message: "Failed to fetch worker",
+      error: error.message,
+    });
+  }
+});
+
+// CREATE WORKER
+app.post("/api/workers", async (req, res) => {
+  try {
+    const worker = new Worker(req.body);
+
+    await worker.save();
+
+    io.emit("worker_update", worker);
+
+    res.status(201).json(worker);
+  } catch (error) {
+    console.error("Create worker error:", error.message);
+
+    res.status(400).json({
+      message: "Failed to create worker",
+      error: error.message,
+    });
+  }
+});
+
+// UPDATE WORKER
+app.put("/api/workers/:workerId", async (req, res) => {
+  try {
+    const worker = await Worker.findOneAndUpdate(
+      {
+        workerId: req.params.workerId,
+      },
+      {
+        $set: req.body,
+      },
+      {
+        new: true,
+        runValidators: true,
+      }
+    );
+
+    if (!worker) {
+      return res.status(404).json({
+        message: "Worker not found",
+      });
+    }
+
+    io.emit("worker_update", worker);
+
+    res.json(worker);
+  } catch (error) {
+    console.error("Update worker error:", error.message);
+
+    res.status(400).json({
+      message: "Failed to update worker",
+      error: error.message,
+    });
+  }
+});
+
+// DELETE WORKER
+app.delete("/api/workers/:workerId", async (req, res) => {
+  try {
+    const worker = await Worker.findOneAndDelete({
+      workerId: req.params.workerId,
+    });
+
+    if (!worker) {
+      return res.status(404).json({
+        message: "Worker not found",
+      });
+    }
+
+    io.emit("worker_update", {
+      workerId: req.params.workerId,
+      deleted: true,
+    });
+
+    res.json({
+      message: "Worker deleted successfully",
+    });
+  } catch (error) {
+    console.error("Delete worker error:", error.message);
+
+    res.status(500).json({
+      message: "Failed to delete worker",
+      error: error.message,
+    });
+  }
+});
+
+/* =========================================================
+   ALERT APIs
+========================================================= */
+
+// GET ACTIVE ALERTS
+app.get("/api/alerts", async (req, res) => {
+  try {
+    const alerts = await Alert.find({
+      resolved: { $ne: true },
+    }).sort({
+      createdAt: -1,
+    });
+
+    res.json(alerts);
+  } catch (error) {
+    console.error("GET alerts error:", error.message);
+
+    res.status(500).json({
+      message: "Failed to fetch alerts",
+      error: error.message,
+    });
+  }
+});
+
+// GET ALL ALERTS
+app.get("/api/alerts/all", async (req, res) => {
+  try {
+    const alerts = await Alert.find().sort({
+      createdAt: -1,
+    });
+
+    res.json(alerts);
+  } catch (error) {
+    res.status(500).json({
+      message: "Failed to fetch alerts",
+      error: error.message,
+    });
+  }
+});
+
+// GET SINGLE ALERT
+app.get("/api/alerts/:id", async (req, res) => {
+  try {
+    const alert = await Alert.findById(req.params.id);
+
+    if (!alert) {
+      return res.status(404).json({
+        message: "Alert not found",
+      });
+    }
+
+    res.json(alert);
+  } catch (error) {
+    res.status(500).json({
+      message: "Failed to fetch alert",
+      error: error.message,
+    });
+  }
+});
+
+// CREATE ALERT
+app.post("/api/alerts", async (req, res) => {
+  try {
+    const alert = new Alert(req.body);
+
+    await alert.save();
+
+    io.emit("alert:created", alert);
+
+    res.status(201).json(alert);
+  } catch (error) {
+    console.error("Create alert error:", error.message);
+
+    res.status(400).json({
+      message: "Failed to create alert",
+      error: error.message,
+    });
+  }
+});
+
+// RESOLVE ALERT
+app.patch("/api/alerts/:id/resolve", async (req, res) => {
+  try {
+    const alert = await Alert.findByIdAndUpdate(
+      req.params.id,
+      {
+        resolved: true,
+        resolvedAt: new Date(),
+      },
+      {
+        new: true,
+      }
+    );
+
+    if (!alert) {
+      return res.status(404).json({
+        message: "Alert not found",
+      });
+    }
+
+    io.emit("alert:resolved", alert);
+
+    res.json(alert);
+  } catch (error) {
+    console.error("Resolve alert error:", error.message);
+
+    res.status(500).json({
+      message: "Failed to resolve alert",
+      error: error.message,
+    });
+  }
+});
+
+/* =========================================================
+   SOCKET.IO CONNECTION
+========================================================= */
+
+io.on("connection", (socket) => {
+  console.log("🟢 Socket connected:", socket.id);
+
+  /* -------------------------------------------------------
+     INITIAL DATA REQUEST
+  ------------------------------------------------------- */
+
+  socket.on("request_initial_data", async () => {
+    try {
+      const workers = await Worker.find().sort({
+        createdAt: -1,
+      });
+
+      const alerts = await Alert.find({
+        resolved: { $ne: true },
+      }).sort({
+        createdAt: -1,
+      });
+
+      socket.emit("initial_data", {
+        workers,
+        alerts,
+      });
+
+      console.log(
+        "📦 Initial data sent to",
+        socket.id
+      );
+    } catch (error) {
+      console.error(
+        "Initial data error:",
+        error.message
+      );
+    }
+  });
+
+  /* -------------------------------------------------------
+     EMERGENCY ALERT
+  ------------------------------------------------------- */
+
+  socket.on("emergency_alert", async (data) => {
+    try {
+      console.log(
+        "🚨 Emergency alert received:",
+        data
+      );
+
+      const alert = new Alert({
+        ...data,
+        resolved: false,
+        createdAt: new Date(),
+      });
+
+      await alert.save();
+
+      // Broadcast to every connected command center
+      io.emit("alert:created", alert);
+
+      io.emit("emergency_broadcast", {
+        ...alert.toObject(),
+      });
+    } catch (error) {
+      console.error(
+        "Emergency alert error:",
+        error.message
+      );
+    }
+  });
+
+  /* -------------------------------------------------------
+     WORKER UPDATE
+  ------------------------------------------------------- */
+
+  socket.on("worker_update", async (data) => {
+    try {
+      console.log(
+        "👷 Worker update:",
+        data
+      );
+
+      const worker = await Worker.findOneAndUpdate(
+        {
+          workerId: data.workerId,
+        },
+        {
+          $set: data,
+        },
+        {
+          new: true,
+          upsert: true,
+        }
+      );
+
+      io.emit("worker_update", worker);
+    } catch (error) {
+      console.error(
+        "Worker update error:",
+        error.message
+      );
+    }
+  });
+
+  /* -------------------------------------------------------
+     RESCUE TEAM DISPATCH
+  ------------------------------------------------------- */
+
+  socket.on("dispatch_rescue_team", async (data) => {
+    try {
+      console.log(
+        "🚑 Rescue team dispatched:",
+        data
+      );
+
+      io.emit("rescue:dispatched", data);
+
+      io.emit("incident:updated", {
+        ...data,
+        status: "RESCUE_DISPATCHED",
+        updatedAt: new Date(),
+      });
+    } catch (error) {
+      console.error(
+        "Rescue dispatch error:",
+        error.message
+      );
+    }
+  });
+
+  /* -------------------------------------------------------
+     RESOLVE ALERT
+  ------------------------------------------------------- */
+
+  socket.on("resolve_alert", async (data) => {
+    try {
+      console.log(
+        "✅ Resolving alert:",
+        data
+      );
+
+      if (data.alertId) {
+        const alert = await Alert.findByIdAndUpdate(
+          data.alertId,
+          {
+            resolved: true,
+            resolvedAt: new Date(),
+          },
+          {
+            new: true,
+          }
+        );
+
+        if (alert) {
+          io.emit("alert:resolved", alert);
+        }
+      }
+
+      io.emit("incident:updated", {
+        ...data,
+        status: "RESOLVED",
+        updatedAt: new Date(),
+      });
+    } catch (error) {
+      console.error(
+        "Resolve alert error:",
+        error.message
+      );
+    }
+  });
+
+  /* -------------------------------------------------------
+     EMERGENCY BROADCAST
+  ------------------------------------------------------- */
+
+  socket.on("emergency_broadcast", (data) => {
+    console.log(
+      "📢 Emergency broadcast:",
+      data
+    );
+
+    socket.broadcast.emit(
+      "emergency_broadcast",
+      data
+    );
+  });
+
+  /* -------------------------------------------------------
+     HAZARD BROADCAST
+  ------------------------------------------------------- */
+
+  socket.on("hazard_broadcast", (data) => {
+    console.log(
+      "⚠️ Hazard broadcast:",
+      data
+    );
+
+    io.emit("hazard:created", data);
+  });
+
+  /* -------------------------------------------------------
+     HAZARD RESOLVE
+  ------------------------------------------------------- */
+
+  socket.on("hazard_resolve", (data) => {
+    console.log(
+      "✅ Hazard resolved:",
+      data
+    );
+
+    io.emit("hazard:resolved", data);
+  });
+
+  /* -------------------------------------------------------
+     RESCUE TEAM UPDATE
+  ------------------------------------------------------- */
+
+  socket.on("rescue_team_update", (data) => {
+    console.log(
+      "🚑 Rescue team update:",
+      data
+    );
+
+    io.emit("rescue_team_update", data);
+  });
+
+  /* -------------------------------------------------------
+     OFFLINE EVENTS SYNC
+  ------------------------------------------------------- */
+
+  socket.on("sync_offline_events", async (events) => {
+    try {
+      console.log(
+        `📡 Syncing ${events?.length || 0} offline events`
+      );
+
+      if (!Array.isArray(events)) {
+        return;
+      }
+
+      for (const event of events) {
+        if (event.type === "emergency_alert") {
+          const alert = new Alert({
+            ...event.data,
+            resolved: false,
+            createdAt: new Date(),
+          });
+
+          await alert.save();
+
+          io.emit("alert:created", alert);
+        }
+
+        if (event.type === "worker_update") {
+          const worker =
+            await Worker.findOneAndUpdate(
+              {
+                workerId:
+                  event.data.workerId,
+              },
+              {
+                $set: event.data,
+              },
+              {
+                new: true,
+                upsert: true,
+              }
+            );
+
+          io.emit(
+            "worker_update",
+            worker
+          );
+        }
+      }
+
+      socket.emit("offline_events_synced", {
+        success: true,
+        count: events.length,
+      });
+    } catch (error) {
+      console.error(
+        "Offline sync error:",
+        error.message
+      );
+
+      socket.emit("offline_events_synced", {
+        success: false,
+        error: error.message,
+      });
+    }
+  });
+
+  /* -------------------------------------------------------
+     DISCONNECT
+  ------------------------------------------------------- */
+
+  socket.on("disconnect", (reason) => {
+    console.log(
+      "🔴 Socket disconnected:",
+      socket.id,
+      "Reason:",
+      reason
+    );
+  });
+
+  socket.on("connect_error", (error) => {
+    console.error(
+      "❌ Socket connection error:",
+      error.message
+    );
+  });
+});
+
+/* =========================================================
+   ERROR HANDLER
+========================================================= */
+
+app.use((err, req, res, next) => {
+  console.error(
+    "Server error:",
+    err.message
+  );
+
+  res.status(500).json({
+    message: "Internal server error",
   });
 });
 
@@ -1112,36 +783,18 @@ app.get("/", (req, res) => {
    START SERVER
 ========================================================= */
 
-server.listen(
-  PORT,
-  "0.0.0.0",
-  () => {
-    console.log("");
-    console.log(
-      "=========================================="
-    );
-    console.log(
-      "       RESCUELINK BACKEND RUNNING"
-    );
-    console.log(
-      "=========================================="
-    );
-
-    console.log(
-      `Local:   http://localhost:${PORT}`
-    );
-
-    console.log(
-      `Network: http://10.65.210.25:${PORT}`
-    );
-
-    console.log(
-      `Client:  ${CLIENT_URL}`
-    );
-
-    console.log(
-      "=========================================="
-    );
-    console.log("");
-  }
-);
+server.listen(PORT, "0.0.0.0", () => {
+  console.log("");
+  console.log("==========================================");
+  console.log("       RESCUELINK BACKEND RUNNING");
+  console.log("==========================================");
+  console.log(`Local:   http://localhost:${PORT}`);
+  console.log(`Network: http://10.65.210.25:${PORT}`);
+  console.log(
+    `Client:  http://localhost:5173`
+  );
+  console.log(
+    `Production Client: https://rescue-link-8zum.vercel.app`
+  );
+  console.log("==========================================");
+});
